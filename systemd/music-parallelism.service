@@ -1,0 +1,25 @@
+[Unit]
+Description=Music Parallelism Prevention - Stops music when focus apps are running
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/music-parallelism.sh instant
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Run as user (needs access to X11/Wayland for window detection)
+# This will be set during installation based on the actual user
+
+# Environment for X11/Wayland access
+Environment=DISPLAY=:0
+
+# Resource limits
+MemoryMax=50M
+CPUQuota=5%
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,3 @@
+# Packages matching any of these substrings require a challenge to install.
+# They will also be uninstalled if found already installed.
+# Lines starting with # are comments.

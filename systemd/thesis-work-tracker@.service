@@ -1,0 +1,29 @@
+[Unit]
+Description=Bachelor Thesis Work Tracker
+Documentation=man:systemd.service(5)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/thesis_work_tracker.sh
+Restart=always
+RestartSec=10
+
+# Run as the user who is logged in (for X11/window detection)
+User=%i
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/%i/.Xauthority"
+
+# Logging
+StandardOutput=append:/var/log/thesis-work-tracker/tracker.log
+StandardError=append:/var/log/thesis-work-tracker/tracker.log
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=false
+ProtectHome=false
+
+[Install]
+WantedBy=default.target
