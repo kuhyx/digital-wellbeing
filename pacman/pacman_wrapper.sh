@@ -453,20 +453,9 @@ function is_steam_package() {
 	[[ $1 == "steam" ]]
 }
 
-# Helper to check if a package name is VirtualBox (hardcoded, cannot be bypassed by editing policy files)
-function is_virtualbox_package() {
-	local pkg_lower="${1,,}"
-	[[ $pkg_lower == *"virtualbox"* || $pkg_lower == *"vbox"* ]]
-}
-
 # Function to check if user is trying to install steam (challenge-eligible package)
 function check_for_steam() {
 	check_install_for is_steam_package "$@"
-}
-
-# Function to check if user is trying to install VirtualBox (hardcoded enforcement)
-function check_for_virtualbox() {
-	check_install_for is_virtualbox_package "$@"
 }
 
 # Function to check if current day is a weekday (after 4PM Friday until midnight Sunday)
@@ -636,27 +625,6 @@ function prompt_for_greylist_challenge() {
 	run_word_challenge "Greylist" 6 120 90 30 15 20
 }
 
-# Function to prompt for VirtualBox installation (enhanced security, hardcoded)
-function prompt_for_virtualbox_challenge() {
-	echo -e "${RED}═══════════════════════════════════════════════════════${NC}"
-	echo -e "${RED}         VIRTUALBOX INSTALLATION ATTEMPT DETECTED       ${NC}"
-	echo -e "${RED}═══════════════════════════════════════════════════════${NC}"
-	echo -e "${YELLOW}WARNING: You are trying to install VirtualBox.${NC}"
-	echo -e "${YELLOW}This package can be used to bypass /etc/hosts restrictions.${NC}"
-	echo -e ""
-	echo -e "${CYAN}Security measures will be automatically applied:${NC}"
-	echo -e "  1. VMs will use host's DNS resolution"
-	echo -e "  2. Host's /etc/hosts will be shared with VMs (read-only)"
-	echo -e "  3. Policy enforcement cannot be disabled via file editing"
-	echo -e ""
-	echo -e "${YELLOW}This is a HARDCODED restriction that cannot be bypassed by${NC}"
-	echo -e "${YELLOW}modifying policy files or reinstalling the wrapper.${NC}"
-	echo -e ""
-
-	# More difficult challenge: word_length=7, words_count=150, timeout=120s, initial_delay=45, post_delay=30-50
-	run_word_challenge "VirtualBox Security" 7 150 120 45 30 20
-}
-
 # Check for wrapper-specific commands
 if [[ $1 == "--help-wrapper" ]]; then
 	show_help
@@ -689,13 +657,6 @@ fi
 # Check for steam (challenge-eligible package)
 if check_for_steam "$@"; then
 	if ! prompt_for_steam_challenge; then
-		exit 1
-	fi
-fi
-
-# Check for VirtualBox (HARDCODED - cannot be bypassed by editing policy files)
-if check_for_virtualbox "$@"; then
-	if ! prompt_for_virtualbox_challenge; then
 		exit 1
 	fi
 fi
@@ -813,71 +774,59 @@ auto_install_leechblock() {
 
 auto_install_leechblock "$@"
 
-# If VirtualBox was involved in this operation, enforce hosts file sharing
-enforce_vbox_hosts_if_needed() {
-	# Only check after install operations
-	if [[ -z ${1:-} ]]; then
+# If VirtualBox is installed, automatically remove all VMs
+auto_remove_virtualbox_vms() {
+	# Check if VBoxManage is available
+	if ! command -v VBoxManage &>/dev/null; then
 		return 0
 	fi
 
-	if [[ $1 != "-S"* && $1 != "-U"* ]]; then
+	# Determine real user (wrapper may run as root via sudo)
+	local real_user="${SUDO_USER:-$USER}"
+
+	# Get list of registered VMs (run as real user since VMs are per-user)
+	local vm_list
+	vm_list=$(sudo -u "$real_user" VBoxManage list vms 2>/dev/null) || return 0
+
+	if [[ -z $vm_list ]]; then
 		return 0
 	fi
 
-	# Check if ANY VirtualBox package is installed (use broader search)
-	local vbox_installed=0
-	if "$PACMAN_BIN" -Qq 2>/dev/null | grep -Eq '^(virtualbox|vbox)'; then
-		vbox_installed=1
-	fi
+	echo -e "${RED}═══════════════════════════════════════════════════════${NC}" >&2
+	echo -e "${RED}     VIRTUALBOX VMs DETECTED - AUTO-REMOVING           ${NC}" >&2
+	echo -e "${RED}═══════════════════════════════════════════════════════${NC}" >&2
 
-	if [[ $vbox_installed -eq 0 ]]; then
-		return 0
-	fi
+	local vm_name
+	local success=0
+	local failed=0
 
-	# Locate the enforcement script
-	local script_dir
-	script_dir="$(dirname "$(readlink -f "$0")")"
-	local vbox_enforce_script=""
-
-	# Try to find the enforcement script
-	if [[ -f "$script_dir/../virtualbox/enforce_vbox_hosts.sh" ]]; then
-		vbox_enforce_script="$script_dir/../virtualbox/enforce_vbox_hosts.sh"
-	elif [[ -f "$HOME/linux-configuration/scripts/digital_wellbeing/virtualbox/enforce_vbox_hosts.sh" ]]; then
-		vbox_enforce_script="$HOME/linux-configuration/scripts/digital_wellbeing/virtualbox/enforce_vbox_hosts.sh"
-	elif [[ -f "/usr/local/share/digital_wellbeing/virtualbox/enforce_vbox_hosts.sh" ]]; then
-		vbox_enforce_script="/usr/local/share/digital_wellbeing/virtualbox/enforce_vbox_hosts.sh"
-	fi
-
-	if [[ -z $vbox_enforce_script ]]; then
-		echo -e "${YELLOW}VirtualBox detected but enforcement script not found. Hosts file may not be enforced in VMs.${NC}" >&2
-		return 0
-	fi
-
-	# Check if enforcement is already applied
-	if bash "$vbox_enforce_script" check >/dev/null 2>&1; then
-		return 0
-	fi
-
-	# VirtualBox is installed but enforcement not applied - this is critical
-	echo -e "${YELLOW}VirtualBox detected. Applying /etc/hosts enforcement to VMs...${NC}" >&2
-	# Note: The wrapper may be running as non-root user (via sudo pacman), but enforcement
-	# script needs root. We check EUID to avoid double sudo if already running as root.
-	if [[ $EUID -ne 0 ]]; then
-		if ! sudo bash "$vbox_enforce_script" enforce; then
-			echo -e "${RED}CRITICAL: Failed to enforce hosts on VirtualBox VMs!${NC}" >&2
-			echo -e "${RED}VMs may bypass /etc/hosts restrictions. Please run manually:${NC}" >&2
-			echo -e "${RED}  sudo $vbox_enforce_script enforce${NC}" >&2
+	while IFS= read -r line; do
+		# VBoxManage list vms output format: "VM Name" {uuid}
+		vm_name=$(echo "$line" | sed 's/^"\(.*\)" {.*}$/\1/')
+		if [[ -z $vm_name ]]; then
+			continue
 		fi
-	else
-		if ! bash "$vbox_enforce_script" enforce; then
-			echo -e "${RED}CRITICAL: Failed to enforce hosts on VirtualBox VMs!${NC}" >&2
-			echo -e "${RED}VMs may bypass /etc/hosts restrictions. Please run manually:${NC}" >&2
-			echo -e "${RED}  $vbox_enforce_script enforce${NC}" >&2
+
+		echo -e "${YELLOW}Removing VM: ${vm_name}${NC}" >&2
+
+		# Power off the VM if it's running
+		sudo -u "$real_user" VBoxManage controlvm "$vm_name" poweroff 2>/dev/null || true
+		sleep 1
+
+		# Unregister and delete all files
+		if sudo -u "$real_user" VBoxManage unregistervm "$vm_name" --delete 2>/dev/null; then
+			echo -e "${GREEN}  Removed: ${vm_name}${NC}" >&2
+			((++success))
+		else
+			echo -e "${RED}  Failed to remove: ${vm_name}${NC}" >&2
+			((++failed))
 		fi
-	fi
+	done <<< "$vm_list"
+
+	echo -e "${CYAN}VM removal complete: ${success} removed, ${failed} failed.${NC}" >&2
 }
 
-enforce_vbox_hosts_if_needed "$@"
+auto_remove_virtualbox_vms
 
 # Display some helpful tips depending on the operation
 if [[ $1 == "-S" || $1 == "-S "* ]] && [ $exit_code -eq 0 ]; then

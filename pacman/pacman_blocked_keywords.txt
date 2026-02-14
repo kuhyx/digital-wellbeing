@@ -57,3 +57,6 @@ youtube
 google-chrome
 chromium
 ungoogled-chromium
+# VirtualBox (can bypass /etc/hosts restrictions)
+virtualbox
+vbox
