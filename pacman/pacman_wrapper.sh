@@ -821,7 +821,7 @@ auto_remove_virtualbox_vms() {
 			echo -e "${RED}  Failed to remove: ${vm_name}${NC}" >&2
 			((++failed))
 		fi
-	done <<< "$vm_list"
+	done <<<"$vm_list"
 
 	echo -e "${CYAN}VM removal complete: ${success} removed, ${failed} failed.${NC}" >&2
 }
