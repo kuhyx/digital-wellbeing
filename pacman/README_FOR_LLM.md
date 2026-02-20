@@ -5,6 +5,7 @@
 ## System Purpose
 
 Intercept all `pacman` commands to:
+
 1. Block installation of restricted packages (browsers, games, etc.)
 2. Require challenges for greylisted packages
 3. Enforce hosts file sharing on VirtualBox VMs
@@ -36,21 +37,22 @@ Intercept all `pacman` commands to:
 
 ## File Locations
 
-| File | Purpose |
-|------|---------|
-| `/usr/bin/pacman` | Symlink to wrapper |
-| `/usr/bin/pacman.orig` | Real pacman binary |
-| `pacman_wrapper.sh` | Main wrapper script (823 lines) |
-| `install_pacman_wrapper.sh` | Installer script |
-| `pacman_blocked_keywords.txt` | Substrings that cause blocking |
-| `pacman_whitelist.txt` | Exact names that bypass blocking |
-| `pacman_greylist.txt` | Packages requiring challenge |
-| `words.txt` | Word scramble challenge dictionary |
-| `/var/lib/pacman-wrapper/policy.sha256` | Integrity checksums |
+| File                                    | Purpose                            |
+| --------------------------------------- | ---------------------------------- |
+| `/usr/bin/pacman`                       | Symlink to wrapper                 |
+| `/usr/bin/pacman.orig`                  | Real pacman binary                 |
+| `pacman_wrapper.sh`                     | Main wrapper script (823 lines)    |
+| `install_pacman_wrapper.sh`             | Installer script                   |
+| `pacman_blocked_keywords.txt`           | Substrings that cause blocking     |
+| `pacman_whitelist.txt`                  | Exact names that bypass blocking   |
+| `pacman_greylist.txt`                   | Packages requiring challenge       |
+| `words.txt`                             | Word scramble challenge dictionary |
+| `/var/lib/pacman-wrapper/policy.sha256` | Integrity checksums                |
 
 ## Policy Files Explained
 
 ### pacman_blocked_keywords.txt
+
 ```
 # Lines starting with # are comments
 # Any package containing these substrings is BLOCKED
@@ -64,6 +66,7 @@ stremio
 If user tries `pacman -S firefox-developer-edition`, it's blocked because it contains "firefox".
 
 ### pacman_whitelist.txt
+
 ```
 # Exact package names that bypass keyword blocking
 minizip          # Contains nothing bad but might match a pattern
@@ -71,6 +74,7 @@ python-requests  # Safe despite containing blocked substrings
 ```
 
 ### pacman_greylist.txt
+
 ```
 # Packages requiring word scramble challenge
 # Currently empty - add packages here for challenge requirement
@@ -81,22 +85,26 @@ python-requests  # Safe despite containing blocked substrings
 These checks are in the script itself and **cannot be bypassed by editing policy files**:
 
 ### VirtualBox Check
+
 ```bash
 function is_virtualbox_package() {
   local pkg_lower="${1,,}"
   [[ $pkg_lower == *"virtualbox"* || $pkg_lower == *"vbox"* ]]
 }
 ```
+
 - Detects any package with "virtualbox" or "vbox" in name
 - Requires word scramble challenge (7-letter words, 120s timeout)
 - Auto-enforces hosts file sharing on all VMs after install
 
 ### Steam Check
+
 ```bash
 function is_steam_package() {
   [[ $1 == "steam" ]]
 }
 ```
+
 - Only exact match "steam" (not steam-native-runtime etc.)
 - **Weekend only** - blocked Monday through Friday 4PM
 - Requires word scramble challenge (5-letter words, 60s timeout)
@@ -134,6 +142,7 @@ verify_policy_integrity() {
 ```
 
 If tampering detected:
+
 ```
 SECURITY WARNING: Policy file integrity check failed!
 CRITICAL: Policy files have been tampered with!
@@ -163,11 +172,13 @@ This allows package installations to modify `/etc/hosts` temporarily (e.g., for 
 ### Adding a Blocked Package
 
 1. Edit `pacman_blocked_keywords.txt`:
+
 ```bash
 echo "newkeyword" >> pacman_blocked_keywords.txt
 ```
 
 2. Reinstall wrapper to update checksums:
+
 ```bash
 sudo ./install_pacman_wrapper.sh
 ```
@@ -177,11 +188,13 @@ sudo ./install_pacman_wrapper.sh
 If a legitimate package is being blocked (e.g., `python-firefox-sync` blocked by "firefox" keyword):
 
 1. Edit `pacman_whitelist.txt`:
+
 ```bash
 echo "python-firefox-sync" >> pacman_whitelist.txt
 ```
 
 2. Reinstall wrapper:
+
 ```bash
 sudo ./install_pacman_wrapper.sh
 ```
@@ -189,6 +202,7 @@ sudo ./install_pacman_wrapper.sh
 ### Adding a Challenge Requirement
 
 1. Edit `pacman_greylist.txt`:
+
 ```bash
 echo "suspicious-package" >> pacman_greylist.txt
 ```
@@ -198,6 +212,7 @@ echo "suspicious-package" >> pacman_greylist.txt
 ### Bypassing the Wrapper (Emergency)
 
 If wrapper is broken and you need real pacman:
+
 ```bash
 sudo /usr/bin/pacman.orig -S package
 ```
@@ -227,6 +242,7 @@ remove_installed_blocked_packages() {
 ## Stale Lock Handling
 
 If `/var/lib/pacman/db.lck` exists but no pacman is running:
+
 - Interactive: Prompts user to remove (15s timeout)
 - Non-interactive (`--noconfirm`): Auto-removes if lock is >10 minutes old
 - If another pacman is actually running: Blocks with error
@@ -234,6 +250,7 @@ If `/var/lib/pacman/db.lck` exists but no pacman is running:
 ## Maintenance Auto-Setup
 
 On first run, wrapper checks if periodic maintenance services exist:
+
 ```bash
 ensure_periodic_maintenance() {
   # Checks: periodic-system-maintenance.timer
@@ -253,6 +270,7 @@ ensure_periodic_maintenance() {
 ## Debugging
 
 ### Check if wrapper is installed
+
 ```bash
 ls -la /usr/bin/pacman
 # Should show: /usr/bin/pacman -> /path/to/pacman_wrapper.sh
@@ -262,6 +280,7 @@ ls -la /usr/bin/pacman.orig
 ```
 
 ### Test policy integrity
+
 ```bash
 cat /var/lib/pacman-wrapper/policy.sha256
 sha256sum /path/to/pacman_blocked_keywords.txt
@@ -269,7 +288,9 @@ sha256sum /path/to/pacman_blocked_keywords.txt
 ```
 
 ### Verbose mode
+
 The wrapper outputs colored status messages to stderr. To see them:
+
 ```bash
 pacman -S package 2>&1 | cat
 ```

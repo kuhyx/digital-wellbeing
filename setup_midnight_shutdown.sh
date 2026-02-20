@@ -734,7 +734,7 @@ print_schedule() {
 show_status() {
     echo "Day-Specific Auto-Shutdown Status"
     echo "================================="
-    
+
     if systemctl is-enabled "$TIMER_NAME" &>/dev/null; then
         echo "Status: ENABLED"
         if systemctl is-active "$TIMER_NAME" &>/dev/null; then
@@ -745,14 +745,14 @@ show_status() {
     else
         echo "Status: NOT ENABLED"
     fi
-    
+
     echo ""
     print_schedule
-    
+
     echo ""
     echo "Next scheduled checks:"
     systemctl list-timers "$TIMER_NAME" --no-pager 2>/dev/null | grep "$TIMER_NAME" || echo "Timer not active"
-    
+
     echo ""
     echo "Recent logs:"
     journalctl -u "$SERVICE_NAME" --no-pager -n 5 2>/dev/null || echo "No recent logs"
@@ -836,7 +836,7 @@ if [[ $day_of_week -ge 1 ]] && [[ $day_of_week -le 3 ]]; then
     # Monday (1), Tuesday (2), Wednesday (3)
     shutdown_start=$mon_wed_minutes
     logger -t day-specific-shutdown "Today is $day_name - checking ${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00 window"
-    
+
     if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -le $morning_end_minutes ]]; then
         should_shutdown=true
         if [[ $current_time_minutes -ge $shutdown_start ]]; then
@@ -851,7 +851,7 @@ else
     # Thursday (4), Friday (5), Saturday (6), Sunday (7)
     shutdown_start=$thu_sun_minutes
     logger -t day-specific-shutdown "Today is $day_name - checking ${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00 window"
-    
+
     if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -le $morning_end_minutes ]]; then
         should_shutdown=true
         if [[ $current_time_minutes -ge $shutdown_start ]]; then

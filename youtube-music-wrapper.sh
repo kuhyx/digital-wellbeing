@@ -13,9 +13,9 @@ LOG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism/music-parallel
 
 # Main
 if focus_app=$(is_focus_app_running); then
-  log_message "BLOCKED: YouTube Music launch prevented (focus app: $focus_app)" "$LOG_FILE"
-  notify "🚫 YouTube Music Blocked" "Focus mode active ($focus_app)" normal 3000
-  exit 1
+	log_message "BLOCKED: YouTube Music launch prevented (focus app: $focus_app)" "$LOG_FILE"
+	notify "🚫 YouTube Music Blocked" "Focus mode active ($focus_app)" normal 3000
+	exit 1
 fi
 
 # No focus app running, launch normally

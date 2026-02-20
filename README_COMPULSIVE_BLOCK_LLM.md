@@ -33,16 +33,16 @@ Limit messaging apps (Beeper, Signal, Discord) to **one launch per hour** to red
 
 ## File Locations
 
-| File | Purpose |
-|------|---------|
-| `/usr/local/bin/block-compulsive-opening.sh` | Installed main script |
-| `/usr/bin/beeper` | Wrapper (replaces original) |
-| `/usr/bin/signal-desktop` | Wrapper (replaces original) |
-| `/usr/bin/discord` | Wrapper (replaces original) |
-| `/usr/bin/*.orig` or `SYMLINK:*` | Original binaries/links |
-| `~/.local/state/compulsive-block/*.lastopen` | Per-app hour tracking |
-| `~/.local/state/compulsive-block/compulsive-block.log` | Activity log |
-| `/etc/pacman.d/hooks/95-compulsive-block-rewrap.hook` | Auto-rewrap hook |
+| File                                                   | Purpose                     |
+| ------------------------------------------------------ | --------------------------- |
+| `/usr/local/bin/block-compulsive-opening.sh`           | Installed main script       |
+| `/usr/bin/beeper`                                      | Wrapper (replaces original) |
+| `/usr/bin/signal-desktop`                              | Wrapper (replaces original) |
+| `/usr/bin/discord`                                     | Wrapper (replaces original) |
+| `/usr/bin/*.orig` or `SYMLINK:*`                       | Original binaries/links     |
+| `~/.local/state/compulsive-block/*.lastopen`           | Per-app hour tracking       |
+| `~/.local/state/compulsive-block/compulsive-block.log` | Activity log                |
+| `/etc/pacman.d/hooks/95-compulsive-block-rewrap.hook`  | Auto-rewrap hook            |
 
 ## Managed Applications
 
@@ -110,6 +110,7 @@ Exec = /usr/local/bin/block-compulsive-opening.sh rewrap-quiet
 ```
 
 The `rewrap-quiet` command:
+
 - Checks if wrapper was overwritten (doesn't contain "block-compulsive-opening")
 - If overwritten: removes stale `.orig`, re-installs wrapper
 - Logs to activity log
@@ -155,6 +156,7 @@ Apps are automatically closed after **10 minutes** to prevent indefinite usage:
 4. State file `~/.local/state/compulsive-block/<app>.running` tracks PID and start time
 
 **Configuration variables** (in script):
+
 ```bash
 AUTO_CLOSE_TIMEOUT_MINUTES=10   # Total session length
 AUTO_CLOSE_WARNING_MINUTES=2     # Warning before close
@@ -163,6 +165,7 @@ AUTO_CLOSE_WARNING_MINUTES=2     # Warning before close
 ## Adding a New App
 
 1. Add to `APPS` associative array:
+
 ```bash
 declare -A APPS=(
   # ... existing apps ...
@@ -171,6 +174,7 @@ declare -A APPS=(
 ```
 
 2. Add to `REAL_BINARIES`:
+
 ```bash
 declare -A REAL_BINARIES=(
   # ... existing apps ...
@@ -179,11 +183,13 @@ declare -A REAL_BINARIES=(
 ```
 
 3. Add to pacman hook targets (if installed via pacman):
+
 ```ini
 Target = newapp
 ```
 
 4. Reinstall:
+
 ```bash
 sudo ./block_compulsive_opening.sh install
 ```
@@ -191,6 +197,7 @@ sudo ./block_compulsive_opening.sh install
 ## Debugging
 
 ### Check if wrapper is installed
+
 ```bash
 cat /usr/bin/discord
 # Should show wrapper script, not binary
@@ -200,18 +207,21 @@ ls -la /usr/bin/discord.orig
 ```
 
 ### Check current state
+
 ```bash
 ./block_compulsive_opening.sh status
 # Shows: which apps are wrapped, last open times, current hour
 ```
 
 ### Test manually
+
 ```bash
 # Simulate wrapper call
 /usr/local/bin/block-compulsive-opening.sh wrapper discord
 ```
 
 ### View logs
+
 ```bash
 tail -f ~/.local/state/compulsive-block/compulsive-block.log
 ```
@@ -219,6 +229,7 @@ tail -f ~/.local/state/compulsive-block/compulsive-block.log
 ## Notification Behavior
 
 When blocked, shows desktop notification:
+
 - Title: "🚫 discord Blocked"
 - Message: "Already opened this hour. Wait until the next hour."
 - Urgency: critical

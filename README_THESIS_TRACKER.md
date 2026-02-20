@@ -21,11 +21,13 @@ This system monitors your active windows and tracks time spent on thesis-related
 The following applications count as "thesis work":
 
 ### Game Engines
+
 - **Unreal Engine** (all versions: UE4, UE5, UnrealEditor)
 - **Unity Engine** (Unity Editor and Unity Hub)
 - **Nvidia Omniverse** (Omniverse and Kit)
 
 ### Development Tools
+
 - **Visual Studio Code** - **ONLY** when working on the `praca_magisterska` repository
   - The window title must contain the repository name
   - Or the workspace must have the repository open
@@ -35,15 +37,18 @@ The following applications count as "thesis work":
 When you haven't met your work quota, the following are blocked via `/etc/hosts`:
 
 ### Gaming
+
 - All Steam domains (steampowered.com, steamcommunity.com, etc.)
 
 ### Social Media
+
 - Reddit
 - Twitter/X
 - Facebook
 - Instagram
 
 ### Video/Entertainment
+
 - YouTube
 - Twitch
 - 9gag
@@ -83,15 +88,18 @@ sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh \
 ### Prerequisites
 
 The installer will check for required dependencies:
+
 - `xdotool` - for window detection
 - `systemd` - for service management
 
 On Arch Linux:
+
 ```bash
 sudo pacman -S xdotool
 ```
 
 On Ubuntu/Debian:
+
 ```bash
 sudo apt install xdotool
 ```
@@ -118,6 +126,7 @@ sudo cat /var/lib/thesis-work-tracker/work-time.state
 ### Understanding the State File
 
 The state file shows:
+
 - `TOTAL_WORK_SECONDS`: Your accumulated work time (in seconds)
 - `STEAM_ACCESS_GRANTED`: Whether distractions are currently unblocked (1=yes, 0=no)
 - `CURRENT_SESSION_SECONDS`: Time in your current work session
@@ -164,31 +173,37 @@ sudo rm -rf /var/log/thesis-work-tracker
 This system is designed to be difficult to bypass:
 
 ### 1. **Immutable State Files**
+
 - State files are protected with `chattr +i` (immutable flag)
 - Cannot be edited even by root without removing the flag first
 - Automatically re-applied after each update
 
 ### 2. **Auto-Restart Service**
+
 - Systemd service automatically restarts if killed
 - Runs continuously in the background
 - Starts automatically on boot
 
 ### 3. **Hosts File Integration**
+
 - Integrates with the repository's hosts guard system
 - Uses immutable `/etc/hosts` file
 - Cannot be easily bypassed by changing DNS
 
 ### 4. **Process Integrity**
+
 - Monitors actual active windows, not just running processes
 - Detects if you switch away from work applications
 - VS Code requires specific repository to be open
 
 ### 5. **Decay Mechanism**
+
 - Using Steam/distractions consumes your earned work time
 - Forces sustained work habits, not just one-time work sessions
 - Fair: 30 minutes of decay per hour of distraction usage
 
 ### 6. **Locked Configuration**
+
 - Configuration is embedded in the installed script
 - Cannot be easily modified without reinstalling
 - Protected script location in `/usr/local/bin`
@@ -228,11 +243,13 @@ ls -la ~/.Xauthority
 ### VS Code Repository Not Detected
 
 Make sure:
+
 1. The window title shows the repository name
 2. You're working in the correct repository folder
 3. The repository name matches what you specified during installation
 
 Test with:
+
 ```bash
 xdotool getactivewindow getwindowname
 # Should show something like: "praca_magisterska - Visual Studio Code"
@@ -241,6 +258,7 @@ xdotool getactivewindow getwindowname
 ### Hosts File Not Updating
 
 Check:
+
 ```bash
 # View current hosts file
 sudo cat /etc/hosts | grep steam
@@ -272,6 +290,7 @@ tail -f /var/log/thesis-work-tracker/tracker.log
 ### Can I bypass this system?
 
 Technically yes, but it's designed to make bypassing more effort than just doing the work:
+
 - You'd need to disable the service (but it auto-restarts)
 - You'd need to modify immutable files (requires chattr commands)
 - You'd need to fake window activity (complex)
@@ -286,6 +305,7 @@ VS Code only counts as work when you're in the `praca_magisterska` repository. O
 ### Can I adjust the work quota after installation?
 
 Yes, but you need to:
+
 1. Uninstall the current system
 2. Reinstall with new parameters
 3. Your accumulated time is preserved in the state file
@@ -309,8 +329,9 @@ Found a bug or have a suggestion? Please open an issue in the main repository.
 ## Acknowledgments
 
 This tool is built on top of the digital wellbeing framework in this repository, including:
+
 - Hosts guard system
-- Psychological friction mechanisms  
+- Psychological friction mechanisms
 - Systemd service patterns
 
 Good luck with your bachelor thesis! 🎓

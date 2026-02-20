@@ -5,6 +5,7 @@
 ## System Purpose
 
 Automatically shut down the PC during configured time windows to enforce healthy sleep schedules:
+
 - **Monday-Wednesday**: Shutdown at 24:00 (midnight)
 - **Thursday-Sunday**: Shutdown at 24:00 (midnight)
 - **Morning**: Safe time starts at 00:00 (effectively no morning block)
@@ -49,21 +50,21 @@ The times above are defaults; actual values in `/etc/shutdown-schedule.conf`.
 
 ## File Locations
 
-| File | Purpose | Protection |
-|------|---------|------------|
-| `/etc/shutdown-schedule.conf` | Runtime config | chattr +i, path watcher |
-| `/usr/local/share/locked-shutdown-schedule.conf` | Canonical copy | chattr +i |
-| `/usr/local/bin/day-specific-shutdown-check.sh` | Shutdown logic | None |
-| `/usr/local/bin/day-specific-shutdown-manager.sh` | Status/management | None |
-| `/usr/local/bin/shutdown-timer-monitor.sh` | Timer re-enabler | None |
-| `/usr/local/sbin/enforce-shutdown-schedule.sh` | Config restoration | None |
-| `/usr/local/sbin/unlock-shutdown-schedule` | Delayed config edit | None |
-| `/etc/systemd/system/day-specific-shutdown.timer` | Timer unit | systemd |
-| `/etc/systemd/system/day-specific-shutdown.service` | Service unit | systemd |
-| `/etc/systemd/system/shutdown-schedule-guard.path` | Config watcher | systemd |
-| `/etc/systemd/system/shutdown-schedule-guard.service` | Enforcement | systemd |
-| `/etc/systemd/system/shutdown-timer-monitor.service` | Timer guardian | systemd |
-| `/var/log/shutdown-schedule-guard.log` | Tampering log | None |
+| File                                                  | Purpose             | Protection              |
+| ----------------------------------------------------- | ------------------- | ----------------------- |
+| `/etc/shutdown-schedule.conf`                         | Runtime config      | chattr +i, path watcher |
+| `/usr/local/share/locked-shutdown-schedule.conf`      | Canonical copy      | chattr +i               |
+| `/usr/local/bin/day-specific-shutdown-check.sh`       | Shutdown logic      | None                    |
+| `/usr/local/bin/day-specific-shutdown-manager.sh`     | Status/management   | None                    |
+| `/usr/local/bin/shutdown-timer-monitor.sh`            | Timer re-enabler    | None                    |
+| `/usr/local/sbin/enforce-shutdown-schedule.sh`        | Config restoration  | None                    |
+| `/usr/local/sbin/unlock-shutdown-schedule`            | Delayed config edit | None                    |
+| `/etc/systemd/system/day-specific-shutdown.timer`     | Timer unit          | systemd                 |
+| `/etc/systemd/system/day-specific-shutdown.service`   | Service unit        | systemd                 |
+| `/etc/systemd/system/shutdown-schedule-guard.path`    | Config watcher      | systemd                 |
+| `/etc/systemd/system/shutdown-schedule-guard.service` | Enforcement         | systemd                 |
+| `/etc/systemd/system/shutdown-timer-monitor.service`  | Timer guardian      | systemd                 |
+| `/var/log/shutdown-schedule-guard.log`                | Tampering log       | None                    |
 
 ## Config File Format
 
@@ -80,13 +81,15 @@ THU_SUN_HOUR=22
 MORNING_END_HOUR=5
 ```
 
-**Interpretation**: 
+**Interpretation**:
+
 - Mon-Wed: Shutdown if current hour >= 21 OR current hour < 5
 - Thu-Sun: Shutdown if current hour >= 22 OR current hour < 5
 
 ## Schedule Protection Logic
 
 The setup script (`setup_midnight_shutdown.sh`) has constants at the top:
+
 ```bash
 SCHEDULE_MON_WED_HOUR=24
 SCHEDULE_THU_SUN_HOUR=24
@@ -95,14 +98,15 @@ SCHEDULE_MORNING_END_HOUR=0
 
 When re-run, it compares these to the canonical config:
 
-| Change Type | Action |
-|-------------|--------|
-| Making shutdown EARLIER | ✅ Allowed without unlock |
-| Making shutdown LATER | ❌ Blocked, requires unlock |
-| Making morning end EARLIER | ❌ Always blocked |
-| Making morning end LATER | ✅ Allowed (extends shutdown window) |
+| Change Type                | Action                               |
+| -------------------------- | ------------------------------------ |
+| Making shutdown EARLIER    | ✅ Allowed without unlock            |
+| Making shutdown LATER      | ❌ Blocked, requires unlock          |
+| Making morning end EARLIER | ❌ Always blocked                    |
+| Making morning end LATER   | ✅ Allowed (extends shutdown window) |
 
 Example blocked attempt:
+
 ```
 ╔══════════════════════════════════════════════════════════════════╗
 ║     ❌ SCHEDULE MODIFICATION BLOCKED - CHEATING DETECTED! ❌     ║
@@ -133,14 +137,18 @@ that this protection is designed to prevent. 😉
 ## Integration Points
 
 ### i3blocks Countdown
+
 `i3blocks/shutdown_countdown.sh` reads the config to show time remaining:
+
 ```bash
 source /etc/shutdown-schedule.conf
 # Calculates and displays "Shutdown in X:XX"
 ```
 
 ### Screen Locker
+
 `screen_lock.py` can adjust shutdown time:
+
 - **Sick day**: Moves shutdown 1.5 hours EARLIER (penalty)
 - **Workout completed**: Moves shutdown 1.5 hours LATER (reward)
 
@@ -149,6 +157,7 @@ Uses `adjust_shutdown_schedule.sh` helper script.
 ## Systemd Units
 
 ### Timer (fires every minute)
+
 ```ini
 [Timer]
 OnCalendar=*:*:00
@@ -157,6 +166,7 @@ AccuracySec=1s
 ```
 
 ### Check Service
+
 ```ini
 [Service]
 Type=oneshot
@@ -164,6 +174,7 @@ ExecStart=/usr/local/bin/day-specific-shutdown-check.sh
 ```
 
 ### Path Watcher
+
 ```ini
 [Path]
 PathChanged=/etc/shutdown-schedule.conf
@@ -194,34 +205,42 @@ fi
 ## Common Tasks
 
 ### Check Current Status
+
 ```bash
 /usr/local/bin/day-specific-shutdown-manager.sh status
 # Or run setup script with 'status' argument
 ```
 
 ### Make Schedule Stricter
+
 Edit the constants in `setup_midnight_shutdown.sh`:
+
 ```bash
 SCHEDULE_MON_WED_HOUR=20  # Changed from 21 to 20 (earlier)
 ```
+
 Then re-run:
+
 ```bash
 sudo ./setup_midnight_shutdown.sh
 ```
 
 ### Make Schedule More Lenient (Requires Unlock)
+
 ```bash
 sudo /usr/local/sbin/unlock-shutdown-schedule
 # Wait for delay, edit config, save
 ```
 
 ### Disable Timer (Will Be Re-Enabled!)
+
 ```bash
 sudo systemctl disable --now day-specific-shutdown.timer
 # Monitor service will re-enable it automatically
 ```
 
 ### Check Protection Status
+
 ```bash
 lsattr /etc/shutdown-schedule.conf
 # Should show: ----i--------e--
@@ -237,7 +256,8 @@ systemctl status shutdown-timer-monitor.service
 3. **Timer Monitor Killable**: User can stop the monitor then the timer
 4. **Check Script Unprotected**: `/usr/local/bin/day-specific-shutdown-check.sh` can be edited
 
-**TODO**: 
+**TODO**:
+
 - Remove helpful bypass instructions from error messages
 - Rename unlock script to obscure name
 - Protect check script with integrity verification
@@ -245,12 +265,14 @@ systemctl status shutdown-timer-monitor.service
 ## Troubleshooting
 
 ### Timer not firing
+
 ```bash
 systemctl status day-specific-shutdown.timer
 systemctl list-timers | grep shutdown
 ```
 
 ### Config not being enforced
+
 ```bash
 # Check path watcher
 systemctl status shutdown-schedule-guard.path
@@ -260,6 +282,7 @@ sudo /usr/local/sbin/enforce-shutdown-schedule.sh
 ```
 
 ### Wrong time shown in i3blocks
+
 ```bash
 # Verify config
 cat /etc/shutdown-schedule.conf
