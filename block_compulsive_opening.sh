@@ -136,6 +136,7 @@ get_running_file() {
 }
 
 # Clean up stale running state (process no longer running)
+# Uses process-name matching so Electron apps that fork don't appear stale.
 cleanup_stale_running_state() {
 	local app="$1"
 	local running_file
@@ -145,19 +146,27 @@ cleanup_stale_running_state() {
 		return 0
 	fi
 
-	local pid
-	pid=$(awk '{print $1}' "$running_file" 2>/dev/null || echo "")
+	local real_binary="${REAL_BINARIES[$app]}"
 
-	if [[ -z $pid ]]; then
-		rm -f "$running_file"
-		return 0
-	fi
-
-	# Check if process is still running
-	if ! kill -0 "$pid" 2>/dev/null; then
-		log_message "CLEANUP: Stale running state for $app (PID $pid no longer exists)"
+	# Check if any process matching the real binary is still running
+	if ! is_app_running "$real_binary"; then
+		log_message "CLEANUP: Stale running state for $app (no matching processes found)"
 		rm -f "$running_file"
 	fi
+}
+
+# Check if app is running by process name (handles Electron apps that fork)
+is_app_running() {
+	local real_binary="$1"
+	pgrep -f "$real_binary" >/dev/null 2>&1
+}
+
+# Kill all processes matching the real binary path
+kill_app() {
+	local real_binary="$1"
+	pkill -f "$real_binary" 2>/dev/null || true
+	sleep 2
+	pkill -9 -f "$real_binary" 2>/dev/null || true
 }
 
 # Launch app with auto-close timer
@@ -174,11 +183,15 @@ launch_with_timer() {
 	"$real_binary" "$@" &
 	local app_pid=$!
 
+	# Give Electron apps time to fork before we start polling
+	sleep 2
+
 	# Record state
 	echo "$app_pid $(date +%s)" >"$running_file"
 	log_message "LAUNCHED: $app with PID $app_pid (auto-close in ${AUTO_CLOSE_TIMEOUT_MINUTES}m)"
 
 	# Spawn the auto-close daemon in a completely detached subshell
+	# Uses process-name matching so it works for Electron apps that fork on launch
 	(
 		# Detach from terminal
 		exec </dev/null >/dev/null 2>&1
@@ -186,8 +199,8 @@ launch_with_timer() {
 		# Wait for warning time
 		sleep "$warning_seconds"
 
-		# Check if still running before warning
-		if kill -0 "$app_pid" 2>/dev/null; then
+		# Check if still running before warning (by process name, not PID)
+		if is_app_running "$real_binary"; then
 			# Send warning notification
 			notify-send -u critical -t 30000 "⏰ $app Closing Soon" \
 				"Session will end in ${AUTO_CLOSE_WARNING_MINUTES} minutes. Save your work!" 2>/dev/null || true
@@ -200,39 +213,32 @@ launch_with_timer() {
 		# Wait remaining time
 		sleep $((AUTO_CLOSE_WARNING_MINUTES * 60))
 
-		# Check if still running
-		if kill -0 "$app_pid" 2>/dev/null; then
+		# Check if still running (by process name)
+		if is_app_running "$real_binary"; then
 			# Send final notification
 			notify-send -u critical -t 5000 "🚫 $app Session Ended" \
 				"Time's up! Closing $app now." 2>/dev/null || true
 
-			# Graceful kill first
-			kill "$app_pid" 2>/dev/null || true
+			# Kill all matching processes (handles forked Electron children)
+			kill_app "$real_binary"
 
-			# Wait a moment for graceful shutdown
-			sleep 2
-
-			# Force kill if still running
-			if kill -0 "$app_pid" 2>/dev/null; then
-				kill -9 "$app_pid" 2>/dev/null || true
-			fi
-
-			echo "$(date '+%Y-%m-%d %H:%M:%S') - AUTO-CLOSED: $app (PID $app_pid) after ${AUTO_CLOSE_TIMEOUT_MINUTES}m" >>"$LOG_FILE" 2>/dev/null || true
+			echo "$(date '+%Y-%m-%d %H:%M:%S') - AUTO-CLOSED: $app after ${AUTO_CLOSE_TIMEOUT_MINUTES}m" >>"$LOG_FILE" 2>/dev/null || true
 		fi
 
 		rm -f "$running_file" 2>/dev/null || true
 	) &
 	disown
 
-	# Wait for the app to exit (keeps wrapper process alive while app is running)
-	wait "$app_pid" 2>/dev/null || true
-	local exit_code=$?
+	# Wait for the app to exit by polling process name.
+	# Electron apps fork immediately so waiting on $app_pid would return too soon.
+	while is_app_running "$real_binary"; do
+		sleep 5
+	done
 
 	# Clean up running state
 	rm -f "$running_file" 2>/dev/null || true
 
-	log_message "EXITED: $app (PID $app_pid) with code $exit_code"
-	return $exit_code
+	log_message "EXITED: $app"
 }
 
 # Main wrapper function - called when wrapping app launches
@@ -269,10 +275,17 @@ install_wrapper() {
 	local wrapper_path="${APPS[$app]}"
 	local real_binary="${REAL_BINARIES[$app]}"
 
-	# Check if already wrapped
+	# Check if already wrapped: .orig must exist AND current file must be our wrapper
 	if [[ -f "${wrapper_path}.orig" ]]; then
-		echo "  ✓ $app already wrapped"
-		return 0
+		if grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
+			echo "  ✓ $app already wrapped"
+			return 0
+		else
+			# .orig exists but wrapper was overwritten (e.g. by package update)
+			echo "  ↻ $app wrapper was overwritten, re-installing..."
+			rm -f "${wrapper_path}.orig"
+			# Fall through to re-install
+		fi
 	fi
 
 	# Check if wrapper location exists (file or symlink)
@@ -428,15 +441,10 @@ rewrap_quiet() {
 	for app in "${!APPS[@]}"; do
 		local wrapper_path="${APPS[$app]}"
 
-		# Check if wrapper was overwritten (no longer our wrapper script)
-		if [[ -f $wrapper_path ]] && ! grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
-			# Wrapper was overwritten by package update
-			log_message "REWRAP: $app wrapper was overwritten, re-installing"
-
-			# Remove old .orig if exists (it's now stale)
+		# Re-wrap if wrapper is missing or was overwritten by a package update
+		if [[ ! -f "${wrapper_path}.orig" ]] || ! grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
+			log_message "REWRAP: $app wrapper missing or overwritten, re-installing"
 			rm -f "${wrapper_path}.orig"
-
-			# Re-install wrapper
 			install_wrapper "$app" >>"$LOG_FILE" 2>&1 || true
 		fi
 	done
