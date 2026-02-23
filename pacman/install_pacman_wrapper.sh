@@ -30,6 +30,14 @@ WHITELIST_DEST="${INSTALL_DIR}/pacman_whitelist.txt"
 GREYLIST_DEST="${INSTALL_DIR}/pacman_greylist.txt"
 INTEGRITY_DIR="/var/lib/pacman-wrapper"
 INTEGRITY_FILE="${INTEGRITY_DIR}/policy.sha256"
+LEECHBLOCK_INSTALLER_SOURCE="$(dirname "$0")/../install_leechblock.sh"
+LEECHBLOCK_DEFAULTS_SOURCE="$(dirname "$0")/../leechblock_defaults.json"
+LEECHBLOCK_SEEDER_SOURCE="$(dirname "$0")/../seed_leechblock_storage.js"
+LEECHBLOCK_PKG_SOURCE="$(dirname "$0")/../package.json"
+LEECHBLOCK_INSTALL_DIR="/usr/local/share/digital_wellbeing"
+LEECHBLOCK_INSTALLER_DEST="${LEECHBLOCK_INSTALL_DIR}/install_leechblock.sh"
+LEECHBLOCK_DEFAULTS_DEST="${LEECHBLOCK_INSTALL_DIR}/leechblock_defaults.json"
+LEECHBLOCK_SEEDER_DEST="${LEECHBLOCK_INSTALL_DIR}/seed_leechblock_storage.js"
 VBOX_ENFORCE_SOURCE="$(dirname "$0")/../virtualbox/enforce_vbox_hosts.sh"
 VBOX_INSTALL_DIR="/usr/local/share/digital_wellbeing/virtualbox"
 VBOX_ENFORCE_DEST="${VBOX_INSTALL_DIR}/enforce_vbox_hosts.sh"
@@ -131,6 +139,30 @@ if command -v chattr > /dev/null 2>&1; then
   # Note: whitelist is intentionally left modifiable for user convenience
 else
   echo -e "${YELLOW}Warning: chattr not available, policy files will not be immutable${NC}"
+fi
+
+# Install LeechBlock installer and defaults if available
+mkdir -p "$LEECHBLOCK_INSTALL_DIR"
+if [ -f "$LEECHBLOCK_INSTALLER_SOURCE" ]; then
+  echo -e "${BLUE}Installing LeechBlock installer to ${LEECHBLOCK_INSTALLER_DEST}...${NC}"
+  cp "$LEECHBLOCK_INSTALLER_SOURCE" "$LEECHBLOCK_INSTALLER_DEST"
+  chmod +x "$LEECHBLOCK_INSTALLER_DEST"
+  echo -e "${GREEN}LeechBlock installer deployed to ${LEECHBLOCK_INSTALLER_DEST}${NC}"
+else
+  echo -e "${YELLOW}LeechBlock installer not found at ${LEECHBLOCK_INSTALLER_SOURCE}, skipping...${NC}"
+fi
+if [ -f "$LEECHBLOCK_DEFAULTS_SOURCE" ]; then
+  cp "$LEECHBLOCK_DEFAULTS_SOURCE" "$LEECHBLOCK_DEFAULTS_DEST"
+  echo -e "${GREEN}LeechBlock defaults deployed to ${LEECHBLOCK_DEFAULTS_DEST}${NC}"
+fi
+if [ -f "$LEECHBLOCK_SEEDER_SOURCE" ]; then
+  cp "$LEECHBLOCK_SEEDER_SOURCE" "$LEECHBLOCK_SEEDER_DEST"
+  echo -e "${GREEN}LeechBlock seeder deployed to ${LEECHBLOCK_SEEDER_DEST}${NC}"
+fi
+if [ -f "$LEECHBLOCK_PKG_SOURCE" ]; then
+  cp "$LEECHBLOCK_PKG_SOURCE" "${LEECHBLOCK_INSTALL_DIR}/package.json"
+  echo -e "${BLUE}Installing Node.js deps in ${LEECHBLOCK_INSTALL_DIR}...${NC}"
+  npm install --prefix "$LEECHBLOCK_INSTALL_DIR" 2>&1 | grep -v '^npm warn' || true
 fi
 
 # Install VirtualBox enforcement script if available

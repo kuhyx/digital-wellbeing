@@ -199,70 +199,53 @@ fi
 EXT_PATH="$CURRENT_LINK" # stable path used by wrappers
 
 # ── Inject default blocking configuration ─────────────────────────────
-# Copy leechblock_defaults.js alongside the extension and patch
-# background.js to import it and seed storage on first run.
+# Write default blocking rules directly into Chrome's LevelDB extension
+# storage via Node.js (classic-level).  This is content-verification-proof:
+# we never touch any extension JS file, so Chrome cannot detect tampering.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULTS_SRC="$SCRIPT_DIR/leechblock_defaults.js"
+DEFAULTS_SRC="$SCRIPT_DIR/leechblock_defaults.json"
 
 if [[ -f $DEFAULTS_SRC ]]; then
-	cp "$DEFAULTS_SRC" "$VERSION_DIR/defaults.js"
-	info "Copied default blocking configuration into extension"
 
-	BG_JS="$VERSION_DIR/background.js"
-	if [[ -f $BG_JS ]]; then
-		# 1) Add importScripts("defaults.js") right after importScripts("common.js")
-		if ! grep -q 'importScripts("defaults.js")' "$BG_JS"; then
-			sed -i 's|importScripts("common.js");|importScripts("common.js");\nimportScripts("defaults.js");|' "$BG_JS"
-			info "Patched background.js to import defaults.js"
-		fi
+	# Ensure classic-level is available next to this script.
+	if [[ ! -d "$SCRIPT_DIR/node_modules/classic-level" ]]; then
+		info "Installing classic-level npm package into $SCRIPT_DIR ..."
+		npm install --prefix "$SCRIPT_DIR" 2>&1 | grep -v '^npm warn' || true
+	fi
 
-		# 2) Inject first-run seeding logic after cleanTimeData(gOptions)
-		if ! grep -q 'LEECHBLOCK_DEFAULTS' "$BG_JS"; then
-			sed -i '/cleanTimeData(gOptions);/a\
-\
-\t\t// ── Seed default blocking rules on first run ──\
-\t\tif (typeof LEECHBLOCK_DEFAULTS !== "undefined") {\
-\t\t\tlet hasAnySites = false;\
-\t\t\tfor (let s = 1; s <= +gOptions["numSets"]; s++) {\
-\t\t\t\tif (gOptions["sites" + s]) { hasAnySites = true; break; }\
-\t\t\t}\
-\t\t\tif (!hasAnySites) {\
-\t\t\t\tfor (let key in LEECHBLOCK_DEFAULTS) {\
-\t\t\t\t\tgOptions[key] = LEECHBLOCK_DEFAULTS[key];\
-\t\t\t\t}\
-\t\t\t\tcleanOptions(gOptions);\
-\t\t\t\tcleanTimeData(gOptions);\
-\t\t\t\tgNumSets = +gOptions["numSets"];\
-\t\t\t\tgStorage.set(gOptions).catch(\
-\t\t\t\t\tfunction (e) { warn("Cannot seed defaults: " + e); }\
-\t\t\t\t);\
-\t\t\t\tlog("Seeded default blocking configuration");\
-\t\t\t}\
-\t\t}' "$BG_JS"
-			info "Patched background.js with first-run seeding logic"
-		fi
+	# Chrome locks its LevelDB files while running — close all Chromium browsers
+	# so the write succeeds.
+	pkill -f 'google-chrome|chromium|brave-browser|vivaldi|thorium' 2>/dev/null || true
+	sleep 1
+
+	# Seed defaults into every Chrome/Chromium profile found on this machine.
+	if node "$SCRIPT_DIR/seed_leechblock_storage.js" "$DEFAULTS_SRC"; then
+		info "Seeded default LeechBlock settings into browser storage"
+	else
+		warn "Could not seed LeechBlock defaults — run manually after install:"
+		warn "  node $SCRIPT_DIR/seed_leechblock_storage.js $DEFAULTS_SRC"
 	fi
 else
-	warn "leechblock_defaults.js not found at $DEFAULTS_SRC — skipping default config"
+	warn "leechblock_defaults.json not found at $DEFAULTS_SRC — skipping default config"
 fi
 
 # Detect browsers
 declare -A BROWSERS
 BROWSERS=(
 	[chromium]="Chromium"
-	[google - chrome - stable]="Google Chrome"
-	[google - chrome]="Google Chrome"
-	[brave - browser]="Brave"
-	[vivaldi - stable]="Vivaldi"
+	[google-chrome-stable]="Google Chrome"
+	[google-chrome]="Google Chrome"
+	[brave-browser]="Brave"
+	[vivaldi-stable]="Vivaldi"
 	[vivaldi]="Vivaldi"
 	[opera]="Opera"
-	[thorium - browser]="Thorium"
+	[thorium-browser]="Thorium"
 )
 
 declare -A FIREFOXES
 FIREFOXES=(
 	[firefox]="Firefox"
-	[firefox - developer - edition]="Firefox Developer Edition"
+	[firefox-developer-edition]="Firefox Developer Edition"
 	[librewolf]="LibreWolf"
 )
 
@@ -272,32 +255,69 @@ found_any=0
 user_apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$user_apps_dir"
 
-# Replace the system browser launcher in-place so every launch includes LeechBlock.
-# The original script/binary is backed up as <path>.orig.
-# Requires sudo for system paths (/usr/bin).
+# Inject --load-extension into a browser launcher so every launch includes LeechBlock.
+# Handles two cases:
+#   1) The binary is a shell script with an "exec" line — patch it in-place.
+#   2) The binary is a compiled ELF — wrap it with a shell script.
+# Follows symlinks only one level to avoid breaking shared wrapper scripts
+# (e.g. browser-preexec-wrapper used by multiple browser symlinks).
+# Requires sudo for system paths.
 replace_browser_in_place() {
 	local bin="$1"
 	shift
 	local pretty="$1"
 	shift
 
+	local bin_path
+	bin_path=$(command -v "$bin" || true)
+	[[ -z $bin_path ]] && return
+
+	# Resolve symlinks to find the actual file to patch.
+	# Use readlink -f to get the canonical path.
 	local real_bin
-	real_bin=$(command -v "$bin" || true)
-	[[ -z $real_bin ]] && return
+	real_bin=$(readlink -f "$bin_path")
 
-	# Resolve to absolute path (handles symlinks etc.)
-	real_bin=$(readlink -f "$real_bin")
+	local load_ext_flag="--load-extension=\"$EXT_PATH\""
 
-	local orig_backup="${real_bin}.orig"
-
-	# If already wrapped, skip (idempotent)
-	if grep -q '__LEECHBLOCK_WRAPPER__' "$real_bin" 2>/dev/null; then
-		info "$pretty ($bin) already wrapped — skipping"
+	# If already patched, skip (idempotent)
+	if grep -q -- "$load_ext_flag" "$real_bin" 2>/dev/null; then
+		info "$pretty ($bin) already has LeechBlock --load-extension — skipping"
 		found_any=1
 		return
 	fi
 
-	# Kill running instances so the new wrapper takes effect
+	# Case 1: Shell script with an exec line — patch the exec line directly.
+	# This preserves the original script's logic (e.g. basename routing,
+	# hosts enforcement) and avoids breaking shared wrapper scripts.
+	if file "$real_bin" 2>/dev/null | grep -qi 'text\|script'; then
+		if grep -qE '^exec ' "$real_bin"; then
+			info "Patching exec line in $real_bin to add LeechBlock…"
+
+			# Kill running instances so the patched script takes effect
+			pkill -f "$real_bin" 2>/dev/null || true
+			sleep 1
+
+			# Back up before patching (only once)
+			local orig_backup="${real_bin}.orig"
+			if [[ ! -f $orig_backup ]]; then
+				info "Backing up $real_bin → $orig_backup"
+				sudo cp -a "$real_bin" "$orig_backup"
+			fi
+
+			# Insert --load-extension right after "exec <command>" on the exec line.
+			# Matches: exec "$real_bin" "$@"  or  exec /path/to/bin $FLAGS "$@"
+			sudo sed -i "s|^exec \(.*\) \"\\\$@\"|exec \1 $load_ext_flag \"\\\$@\"|" "$real_bin"
+
+			info "✓ $pretty exec line patched with LeechBlock"
+			found_any=1
+			return
+		fi
+	fi
+
+	# Case 2: Binary or script without a recognisable exec line — wrap it.
+	local orig_backup="${real_bin}.orig"
+
+	# Kill running instances
 	info "Killing running $pretty instances…"
 	pkill -f "$real_bin" 2>/dev/null || true
 	pkill -f "$(basename "$real_bin")" 2>/dev/null || true

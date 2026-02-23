@@ -1,0 +1,10 @@
+{
+  "name": "digital-wellbeing-tools",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Node.js helpers for the digital-wellbeing scripts (e.g. LeechBlock storage seeder).",
+  "scripts": {},
+  "dependencies": {
+    "classic-level": "^1.4.1"
+  }
+}

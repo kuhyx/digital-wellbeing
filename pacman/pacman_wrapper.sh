@@ -738,12 +738,10 @@ auto_install_leechblock() {
 	script_dir="$(dirname "$(readlink -f "$0")")"
 	local leechblock_installer=""
 
-	if [[ -f "$script_dir/../install_leechblock.sh" ]]; then
-		leechblock_installer="$script_dir/../install_leechblock.sh"
-	elif [[ -f "$HOME/linux-configuration/scripts/digital_wellbeing/install_leechblock.sh" ]]; then
-		leechblock_installer="$HOME/linux-configuration/scripts/digital_wellbeing/install_leechblock.sh"
-	elif [[ -f "/usr/local/share/digital_wellbeing/install_leechblock.sh" ]]; then
+	if [[ -f "/usr/local/share/digital_wellbeing/install_leechblock.sh" ]]; then
 		leechblock_installer="/usr/local/share/digital_wellbeing/install_leechblock.sh"
+	elif [[ -f "$script_dir/../install_leechblock.sh" ]]; then
+		leechblock_installer="$script_dir/../install_leechblock.sh"
 	fi
 
 	if [[ -z $leechblock_installer ]]; then

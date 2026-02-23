@@ -53,10 +53,26 @@ netsurf
 amfora
 tartube
 youtube
-# Chrome/Chromium variants
+# Chrome/Chromium variants not handled by install_leechblock.sh
 google-chrome
 chromium
 ungoogled-chromium
+microsoft-edge
+microsoft-edge-stable
+microsoft-edge-beta
+microsoft-edge-dev
+iridium
+slimjet
+chromium-dev
+# Firefox variants not handled by install_leechblock.sh
+firefox-esr
+firefox-nightly
+# Opera variants not in BROWSERS array
+opera-beta
+opera-developer
+# Qt/WebKit/other GUI browsers not handled by install_leechblock.sh
+qutebrowser
+midori
 # VirtualBox (can bypass /etc/hosts restrictions)
 virtualbox
 vbox
