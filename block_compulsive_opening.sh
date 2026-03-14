@@ -31,6 +31,12 @@ AUTO_CLOSE_TIMEOUT_MINUTES=10
 # Warning before auto-close (in minutes before timeout)
 AUTO_CLOSE_WARNING_MINUTES=2
 
+# Per-app timeout overrides (apps not listed use AUTO_CLOSE_TIMEOUT_MINUTES)
+declare -A APP_TIMEOUT_MINUTES=(
+	["beeper"]=20
+	["signal-desktop"]=20
+)
+
 # Apps to limit (name -> binary path)
 # These are the primary wrapper locations (what the user calls)
 declare -A APPS=(
@@ -175,7 +181,9 @@ launch_with_timer() {
 	local real_binary="$2"
 	shift 2
 
-	local warning_seconds=$(((AUTO_CLOSE_TIMEOUT_MINUTES - AUTO_CLOSE_WARNING_MINUTES) * 60))
+	# Use per-app timeout if set, otherwise fall back to global default
+	local timeout_minutes="${APP_TIMEOUT_MINUTES[$app]:-$AUTO_CLOSE_TIMEOUT_MINUTES}"
+	local warning_seconds=$(((timeout_minutes - AUTO_CLOSE_WARNING_MINUTES) * 60))
 	local running_file
 	running_file=$(get_running_file "$app")
 
@@ -188,7 +196,7 @@ launch_with_timer() {
 
 	# Record state
 	echo "$app_pid $(date +%s)" >"$running_file"
-	log_message "LAUNCHED: $app with PID $app_pid (auto-close in ${AUTO_CLOSE_TIMEOUT_MINUTES}m)"
+	log_message "LAUNCHED: $app with PID $app_pid (auto-close in ${timeout_minutes}m)"
 
 	# Spawn the auto-close daemon in a completely detached subshell
 	# Uses process-name matching so it works for Electron apps that fork on launch
@@ -222,7 +230,7 @@ launch_with_timer() {
 			# Kill all matching processes (handles forked Electron children)
 			kill_app "$real_binary"
 
-			echo "$(date '+%Y-%m-%d %H:%M:%S') - AUTO-CLOSED: $app after ${AUTO_CLOSE_TIMEOUT_MINUTES}m" >>"$LOG_FILE" 2>/dev/null || true
+			echo "$(date '+%Y-%m-%d %H:%M:%S') - AUTO-CLOSED: $app after ${timeout_minutes}m" >>"$LOG_FILE" 2>/dev/null || true
 		fi
 
 		rm -f "$running_file" 2>/dev/null || true
