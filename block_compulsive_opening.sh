@@ -175,11 +175,37 @@ kill_app() {
 	pkill -9 -f "$real_binary" 2>/dev/null || true
 }
 
+# Check if auto-close is suspended for an app today
+is_autoclose_suspended() {
+	local app="$1"
+	local today
+	today=$(date '+%Y-%m-%d')
+	local suspend_file="$STATE_DIR/${app}.suspend-autoclose"
+
+	if [[ -f $suspend_file ]]; then
+		local suspend_date
+		suspend_date=$(cat "$suspend_file" 2>/dev/null || echo "")
+		if [[ $suspend_date == "$today" ]]; then
+			return 0 # Suspended for today
+		else
+			# Stale suspend file, clean up
+			rm -f "$suspend_file"
+		fi
+	fi
+	return 1
+}
+
 # Launch app with auto-close timer
 launch_with_timer() {
 	local app="$1"
 	local real_binary="$2"
 	shift 2
+
+	# Check if auto-close is suspended for today
+	if is_autoclose_suspended "$app"; then
+		log_message "LAUNCHED: $app (auto-close suspended for today)"
+		exec "$real_binary" "$@"
+	fi
 
 	# Use per-app timeout if set, otherwise fall back to global default
 	local timeout_minutes="${APP_TIMEOUT_MINUTES[$app]:-$AUTO_CLOSE_TIMEOUT_MINUTES}"
