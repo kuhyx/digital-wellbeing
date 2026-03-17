@@ -27,9 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Configuration
-STATE_DIR = (
-    Path.home() / ".local" / "state" / "focus-mode"
-)
+STATE_DIR = Path.home() / ".local" / "state" / "focus-mode"
 LOG_FILE = STATE_DIR / "focus-mode.log"
 POLL_INTERVAL = 2  # seconds between process checks
 
@@ -85,9 +83,7 @@ IGNORE_PATTERNS = frozenset(
 
 def log(message: str) -> None:
     """Log message with timestamp."""
-    timestamp = datetime.now(tz=timezone.utc).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     log_line = f"{timestamp} - {message}"
     logger.info("%s", log_line)
     with contextlib.suppress(OSError):
@@ -96,16 +92,12 @@ def log(message: str) -> None:
             f.write(log_line + "\n")
 
 
-def notify(
-    title: str, message: str, urgency: str = "normal"
-) -> None:
+def notify(title: str, message: str, urgency: str = "normal") -> None:
     """Send desktop notification."""
     notify_send = shutil.which("notify-send")
     if notify_send is None:
         return
-    with contextlib.suppress(
-        OSError, subprocess.SubprocessError
-    ):
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run(
             [notify_send, "-u", urgency, title, message],
             capture_output=True,
@@ -160,9 +152,7 @@ def is_browser_running(processes: set[str]) -> bool:
     return False
 
 
-def _run_pkill(
-    pattern: str, *, force: bool = False
-) -> None:
+def _run_pkill(pattern: str, *, force: bool = False) -> None:
     """Run pkill with the given pattern."""
     pkill_bin = shutil.which("pkill")
     if pkill_bin is None:
@@ -171,12 +161,8 @@ def _run_pkill(
     if force:
         cmd.append("-9")
     cmd.extend(["-f", pattern])
-    with contextlib.suppress(
-        OSError, subprocess.SubprocessError
-    ):
-        subprocess.run(
-            cmd, capture_output=True, timeout=5, check=False
-        )
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(cmd, capture_output=True, timeout=5, check=False)
 
 
 def kill_steam() -> None:
@@ -219,9 +205,7 @@ class FocusMode:
         self.current_mode: str | None = None
         self.mode_start_time: datetime | None = None
 
-    def _enter_mode(
-        self, mode: str, msg: str, notification: str
-    ) -> None:
+    def _enter_mode(self, mode: str, msg: str, notification: str) -> None:
         """Enter a new focus mode."""
         log(msg)
         self.current_mode = mode
@@ -236,28 +220,21 @@ class FocusMode:
     ) -> None:
         """Handle updates when no mode is active."""
         if steam_running and browser_running:
-            log(
-                "Both Steam and browsers detected at "
-                "startup - entering GAMING mode"
-            )
+            log("Both Steam and browsers detected at " "startup - entering GAMING mode")
             self.current_mode = "gaming"
-            self.mode_start_time = datetime.now(
-                tz=timezone.utc
-            )
+            self.mode_start_time = datetime.now(tz=timezone.utc)
             kill_browsers()
         elif steam_running:
             self._enter_mode(
                 "gaming",
                 "Steam detected - entering GAMING mode",
-                "\U0001f3ae Gaming Mode|"
-                "Steam detected. Browsers are now blocked.",
+                "\U0001f3ae Gaming Mode|" "Steam detected. Browsers are now blocked.",
             )
         elif browser_running:
             self._enter_mode(
                 "browsing",
                 "Browser detected - entering BROWSING mode",
-                "\U0001f310 Browsing Mode|"
-                "Browser detected. Steam is now blocked.",
+                "\U0001f310 Browsing Mode|" "Browser detected. Steam is now blocked.",
             )
 
     def _handle_gaming(
@@ -277,10 +254,7 @@ class FocusMode:
                 "normal",
             )
         elif browser_running:
-            log(
-                "Browser detected during GAMING mode "
-                "- killing browsers"
-            )
+            log("Browser detected during GAMING mode " "- killing browsers")
             kill_browsers()
 
     def _handle_browsing(
@@ -300,10 +274,7 @@ class FocusMode:
                 "normal",
             )
         elif steam_running:
-            log(
-                "Steam detected during BROWSING mode "
-                "- killing Steam"
-            )
+            log("Steam detected during BROWSING mode " "- killing Steam")
             kill_steam()
 
     def update(self, processes: set[str]) -> None:
@@ -334,22 +305,13 @@ class FocusMode:
 
         duration = ""
         if self.mode_start_time:
-            elapsed = (
-                datetime.now(tz=timezone.utc)
-                - self.mode_start_time
-            )
+            elapsed = datetime.now(tz=timezone.utc) - self.mode_start_time
             minutes = int(elapsed.total_seconds() // 60)
             duration = f" (active for {minutes}m)"
 
         if self.current_mode == "gaming":
-            return (
-                f"\U0001f3ae GAMING mode{duration}"
-                " - browsers blocked"
-            )
-        return (
-            f"\U0001f310 BROWSING mode{duration}"
-            " - Steam blocked"
-        )
+            return f"\U0001f3ae GAMING mode{duration}" " - browsers blocked"
+        return f"\U0001f310 BROWSING mode{duration}" " - Steam blocked"
 
 
 def write_status(focus: FocusMode) -> None:
@@ -359,21 +321,15 @@ def write_status(focus: FocusMode) -> None:
         status_file = STATE_DIR / "status"
         with status_file.open("w") as f:
             f.write(focus.get_status() + "\n")
-            f.write(
-                f"mode={focus.current_mode or 'none'}\n"
-            )
+            f.write(f"mode={focus.current_mode or 'none'}\n")
 
 
 def main() -> None:
     """Run the main daemon loop."""
-    logging.basicConfig(
-        format="%(message)s", level=logging.INFO
-    )
+    logging.basicConfig(format="%(message)s", level=logging.INFO)
     log("Focus Mode Daemon starting...")
 
-    def handle_signal(
-        signum: int, _frame: FrameType | None
-    ) -> None:
+    def handle_signal(signum: int, _frame: FrameType | None) -> None:
         """Handle termination signals."""
         log(f"Received signal {signum} - shutting down")
         sys.exit(0)
