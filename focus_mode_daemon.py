@@ -220,7 +220,7 @@ class FocusMode:
     ) -> None:
         """Handle updates when no mode is active."""
         if steam_running and browser_running:
-            log("Both Steam and browsers detected at " "startup - entering GAMING mode")
+            log("Both Steam and browsers detected at startup - entering GAMING mode")
             self.current_mode = "gaming"
             self.mode_start_time = datetime.now(tz=timezone.utc)
             kill_browsers()
@@ -228,13 +228,13 @@ class FocusMode:
             self._enter_mode(
                 "gaming",
                 "Steam detected - entering GAMING mode",
-                "\U0001f3ae Gaming Mode|" "Steam detected. Browsers are now blocked.",
+                "\U0001f3ae Gaming Mode|Steam detected. Browsers are now blocked.",
             )
         elif browser_running:
             self._enter_mode(
                 "browsing",
                 "Browser detected - entering BROWSING mode",
-                "\U0001f310 Browsing Mode|" "Browser detected. Steam is now blocked.",
+                "\U0001f310 Browsing Mode|Browser detected. Steam is now blocked.",
             )
 
     def _handle_gaming(
@@ -254,7 +254,7 @@ class FocusMode:
                 "normal",
             )
         elif browser_running:
-            log("Browser detected during GAMING mode " "- killing browsers")
+            log("Browser detected during GAMING mode - killing browsers")
             kill_browsers()
 
     def _handle_browsing(
@@ -274,7 +274,7 @@ class FocusMode:
                 "normal",
             )
         elif steam_running:
-            log("Steam detected during BROWSING mode " "- killing Steam")
+            log("Steam detected during BROWSING mode - killing Steam")
             kill_steam()
 
     def update(self, processes: set[str]) -> None:
@@ -310,8 +310,8 @@ class FocusMode:
             duration = f" (active for {minutes}m)"
 
         if self.current_mode == "gaming":
-            return f"\U0001f3ae GAMING mode{duration}" " - browsers blocked"
-        return f"\U0001f310 BROWSING mode{duration}" " - Steam blocked"
+            return f"\U0001f3ae GAMING mode{duration} - browsers blocked"
+        return f"\U0001f310 BROWSING mode{duration} - Steam blocked"
 
 
 def write_status(focus: FocusMode) -> None:
