@@ -30,6 +30,7 @@ The daemon enforces mutual exclusion between Steam and web browsers:
 - If Steam starts first: browsers are blocked/killed
 - If browser starts first: Steam is blocked/killed
 - Whichever started first "wins" until it exits
+- Use "focus-mode-daemon whitelist" to temporarily allow browsers for auth flows
 EOF
 }
 
@@ -112,9 +113,15 @@ EOF
 	echo "Status: $(systemctl --user is-active focus-mode.service 2>/dev/null || echo 'unknown')"
 	echo ""
 	echo "Commands:"
-	echo "  systemctl --user status focus-mode   - Check daemon status"
-	echo "  journalctl --user -u focus-mode -f   - View daemon logs"
-	echo "  cat ~/.local/state/focus-mode/status - View current mode"
+	echo "  systemctl --user status focus-mode       - Check daemon status"
+	echo "  journalctl --user -u focus-mode -f       - View daemon logs"
+	echo "  cat ~/.local/state/focus-mode/status     - View current mode"
+	echo ""
+	echo "Browser Whitelist (for auth/verification flows):"
+	echo "  focus-mode-daemon whitelist               - Allow browsers for 5 minutes"
+	echo "  focus-mode-daemon whitelist 10            - Allow browsers for 10 minutes"
+	echo "  focus-mode-daemon cancel-whitelist        - Cancel whitelist early"
+	echo "  focus-mode-daemon status                  - Check whitelist status"
 	echo ""
 }
 

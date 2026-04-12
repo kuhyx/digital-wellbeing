@@ -10,8 +10,9 @@ Run as a systemd user service for continuous monitoring.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 import shutil
@@ -29,7 +30,9 @@ logger = logging.getLogger(__name__)
 # Configuration
 STATE_DIR = Path.home() / ".local" / "state" / "focus-mode"
 LOG_FILE = STATE_DIR / "focus-mode.log"
+WHITELIST_FILE = STATE_DIR / "whitelist"
 POLL_INTERVAL = 2  # seconds between process checks
+DEFAULT_WHITELIST_MINUTES = 5
 
 # Process patterns
 STEAM_PATTERNS = frozenset(
@@ -90,6 +93,58 @@ def log(message: str) -> None:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a") as f:
             f.write(log_line + "\n")
+
+
+def is_whitelist_active() -> bool:
+    """Check if the browser whitelist is currently active."""
+    try:
+        if not WHITELIST_FILE.exists():
+            return False
+        expiry_str = WHITELIST_FILE.read_text().strip()
+        expiry = datetime.fromisoformat(expiry_str)
+        if datetime.now(tz=timezone.utc) < expiry:
+            return True
+        # Expired - clean up
+        WHITELIST_FILE.unlink(missing_ok=True)
+        log("Browser whitelist expired")
+        notify(
+            "\U0001f6ab Whitelist Expired",
+            "Browser whitelist ended. Browsers are blocked again.",
+            "normal",
+        )
+    except (ValueError, OSError) as exc:
+        log(f"Error reading whitelist: {exc}")
+        with contextlib.suppress(OSError):
+            WHITELIST_FILE.unlink(missing_ok=True)
+    return False
+
+
+def activate_whitelist(minutes: int = DEFAULT_WHITELIST_MINUTES) -> None:
+    """Activate the browser whitelist for the given number of minutes."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    expiry = datetime.now(tz=timezone.utc) + timedelta(minutes=minutes)
+    WHITELIST_FILE.write_text(expiry.isoformat() + "\n")
+    expiry_str = expiry.strftime("%H:%M:%S")
+    log(f"Browser whitelist activated for {minutes} minutes (expires {expiry_str} UTC)")
+    notify(
+        "\U0001f513 Browser Whitelist Active",
+        f"Browsers allowed for {minutes} minutes (auth/verification).",
+        "normal",
+    )
+
+
+def cancel_whitelist() -> None:
+    """Cancel the browser whitelist."""
+    if WHITELIST_FILE.exists():
+        WHITELIST_FILE.unlink(missing_ok=True)
+        log("Browser whitelist cancelled")
+        notify(
+            "\U0001f6ab Whitelist Cancelled",
+            "Browser whitelist removed. Browsers are blocked again.",
+            "normal",
+        )
+    else:
+        log("No active whitelist to cancel")
 
 
 def notify(title: str, message: str, urgency: str = "normal") -> None:
@@ -254,6 +309,8 @@ class FocusMode:
                 "normal",
             )
         elif browser_running:
+            if is_whitelist_active():
+                return
             log("Browser detected during GAMING mode - killing browsers")
             kill_browsers()
 
@@ -322,11 +379,75 @@ def write_status(focus: FocusMode) -> None:
         with status_file.open("w") as f:
             f.write(focus.get_status() + "\n")
             f.write(f"mode={focus.current_mode or 'none'}\n")
+            f.write(f"whitelist={'active' if is_whitelist_active() else 'inactive'}\n")
+
+
+def _parse_args() -> tuple[str, int]:
+    """Parse command-line arguments.
+
+    Returns a (command, minutes) tuple where command is one of
+    'daemon', 'whitelist', or 'cancel-whitelist'.
+    """
+    parser = argparse.ArgumentParser(
+        description="Focus Mode Daemon - Steam/Browser mutual exclusion",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    wl = sub.add_parser(
+        "whitelist",
+        help=f"Allow browsers temporarily ({DEFAULT_WHITELIST_MINUTES}m default)",
+    )
+    wl.add_argument(
+        "minutes",
+        nargs="?",
+        type=int,
+        default=DEFAULT_WHITELIST_MINUTES,
+        help="Duration in minutes (default: %(default)s)",
+    )
+
+    sub.add_parser("cancel-whitelist", help="Cancel active browser whitelist")
+    sub.add_parser("status", help="Show whitelist status")
+
+    args = parser.parse_args()
+    command = args.command or "daemon"
+    minutes = getattr(args, "minutes", DEFAULT_WHITELIST_MINUTES)
+    return command, minutes
+
+
+def _print_whitelist_status() -> None:
+    """Print current whitelist status to stdout."""
+    if not WHITELIST_FILE.exists():
+        return
+    try:
+        expiry_str = WHITELIST_FILE.read_text().strip()
+        expiry = datetime.fromisoformat(expiry_str)
+        now = datetime.now(tz=timezone.utc)
+        if now < expiry:
+            remaining = expiry - now
+            int(remaining.total_seconds() // 60)
+            int(remaining.total_seconds() % 60)
+        else:
+            pass
+    except (ValueError, OSError):
+        pass
 
 
 def main() -> None:
-    """Run the main daemon loop."""
+    """Run the main daemon loop or handle CLI subcommands."""
     logging.basicConfig(format="%(message)s", level=logging.INFO)
+
+    command, minutes = _parse_args()
+
+    if command == "whitelist":
+        activate_whitelist(minutes)
+        return
+    if command == "cancel-whitelist":
+        cancel_whitelist()
+        return
+    if command == "status":
+        _print_whitelist_status()
+        return
+
     log("Focus Mode Daemon starting...")
 
     def handle_signal(signum: int, _frame: FrameType | None) -> None:
