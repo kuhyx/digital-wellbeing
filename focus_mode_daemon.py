@@ -162,26 +162,19 @@ def notify(title: str, message: str, urgency: str = "normal") -> None:
 
 
 def get_running_processes() -> set[str]:
-    """Get set of currently running process names."""
+    """Get set of currently running process names by reading /proc directly.
+
+    Reads /proc/*/comm to avoid forking a subprocess on every poll cycle.
+    """
     processes: set[str] = set()
-    ps_bin = shutil.which("ps")
-    if ps_bin is None:
-        return processes
     try:
-        result = subprocess.run(
-            [ps_bin, "-eo", "comm="],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-        if result.returncode == 0:
-            for line in result.stdout.strip().split("\n"):
-                proc_name = line.strip().lower()
+        for comm_path in Path("/proc").glob("*/comm"):
+            with contextlib.suppress(OSError):
+                proc_name = comm_path.read_text().strip().lower()
                 if proc_name:
                     processes.add(proc_name)
-    except (OSError, subprocess.SubprocessError) as exc:
-        log(f"Error getting processes: {exc}")
+    except OSError as exc:
+        log(f"Error reading /proc: {exc}")
     return processes
 
 
