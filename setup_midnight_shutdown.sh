@@ -44,7 +44,13 @@ check_schedule_protection() {
 	canonical_morning_end="${MORNING_END_HOUR:-}"
 
 	# If canonical values are empty, skip check
-	if [[ -z $canonical_mon_wed ]] || [[ -z $canonical_thu_sun ]] || [[ -z $canonical_morning_end ]]; then
+	if [[ -z $canonical_mon_wed ]]; then
+		return 0
+	fi
+	if [[ -z $canonical_thu_sun ]]; then
+		return 0
+	fi
+	if [[ -z $canonical_morning_end ]]; then
 		return 0
 	fi
 
@@ -666,7 +672,7 @@ Requires=day-specific-shutdown.service
 [Timer]
 EOF
 		# Evening hours: from earliest shutdown hour to 23:30
-		for hour in $(seq "$earliest_hour" 23); do
+		for hour in $(seq "$earliest_hour" 24); do
 			printf 'OnCalendar=*-*-* %02d:00:00\n' "$hour"
 			printf 'OnCalendar=*-*-* %02d:30:00\n' "$hour"
 		done
@@ -810,7 +816,15 @@ fi
 source "$CONFIG_FILE"
 
 # Validate config
-if [[ -z "${MON_WED_HOUR:-}" ]] || [[ -z "${THU_SUN_HOUR:-}" ]] || [[ -z "${MORNING_END_HOUR:-}" ]]; then
+if [[ -z "${MON_WED_HOUR:-}" ]]; then
+	logger -t day-specific-shutdown "ERROR: Config file missing required variables"
+	exit 1
+fi
+if [[ -z "${THU_SUN_HOUR:-}" ]]; then
+	logger -t day-specific-shutdown "ERROR: Config file missing required variables"
+	exit 1
+fi
+if [[ -z "${MORNING_END_HOUR:-}" ]]; then
     logger -t day-specific-shutdown "ERROR: Config file missing required variables"
     exit 1
 fi
@@ -1165,7 +1179,9 @@ test_setup() {
 
 	echo ""
 	echo "Next scheduled checks:"
-	systemctl list-timers day-specific-shutdown.timer --no-pager 2>/dev/null | head -5 | grep day-specific-shutdown || echo "Timer information not available"
+	if ! systemctl list-timers day-specific-shutdown.timer --no-pager 2>/dev/null | head -5 | grep day-specific-shutdown; then
+		echo "Timer information not available"
+	fi
 }
 
 # Display the shutdown schedule (used in multiple places)

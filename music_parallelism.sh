@@ -19,6 +19,7 @@ LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism"
 mkdir -p "$LOG_DIR" 2> /dev/null || true
 export LOG_FILE="$LOG_DIR/music-parallelism.log"
 CHECK_INTERVAL=3
+FAST_CHECK_INTERVAL=0.5
 
 # Override focus apps with extended list for this script
 FOCUS_APPS_WINDOWS=(
@@ -182,13 +183,13 @@ notify_user() {
   log_message "$message"
 }
 
-# Instant monitoring loop - uses polling at high frequency
-# This runs every 0.5 seconds for near-instant detection
+# Instant monitoring loop - uses polling at high frequency ONLY when focus app is detected
+# When focus app active: checks every 0.5s. When idle: checks every 3s. Reduces fork overhead.
 instant_monitor_loop() {
   log_message "=== Music Parallelism INSTANT Monitor Started ==="
   log_message "Focus apps (windows): ${FOCUS_APPS_WINDOWS[*]}"
   log_message "Focus apps (processes): ${FOCUS_APPS_PROCESSES[*]}"
-  log_message "Polling every 0.5 seconds for instant kill"
+  log_message "Polling: 0.5s when focus app active, 3s when idle (optimized for lower fork overhead)"
 
   while true; do
     # Only check if focus app is running
@@ -204,8 +205,11 @@ instant_monitor_loop() {
         pkill -9 -x "spotify" 2> /dev/null || true
         log_message "INSTANT KILL: Spotify terminated"
       fi
+      sleep "$FAST_CHECK_INTERVAL"  # High-frequency check while focus app is active
+    else
+      # No focus app detected: use longer sleep to reduce fork overhead significantly
+      sleep 3
     fi
-    sleep 0.5
   done
 }
 
