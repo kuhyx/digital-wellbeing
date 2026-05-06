@@ -11,8 +11,16 @@ set -euo pipefail
 
 # Source common library for shared functions
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
+if [[ -f "$SCRIPT_DIR/../lib/common.sh" ]]; then
+  # shellcheck source=../lib/common.sh
+  source "$SCRIPT_DIR/../lib/common.sh"
+elif [[ -f "/usr/local/lib/common.sh" ]]; then
+  # shellcheck source=/usr/local/lib/common.sh
+  source "/usr/local/lib/common.sh"
+else
+  echo "ERROR: common.sh library not found"
+  exit 1
+fi
 
 # Configuration
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism"
@@ -70,24 +78,34 @@ MUSIC_SERVICES=(
   "pandora.com"
 )
 
-# Check if any music service is running and return its details
+# Check if any music service is running and return its details (OPTIMIZED: batch pgrep calls)
 find_music_services() {
   local found_services=()
 
-  for service in "${MUSIC_SERVICES[@]}"; do
-    # Check for browser tabs with music services
-    # This checks window titles which usually contain the URL or tab title
-    if command -v xdotool &> /dev/null; then
-      if xdotool search --name "$service" &> /dev/null 2>&1; then
-        found_services+=("$service (window)")
-      fi
-    fi
+  # Single pgrep call with combined regex for all music services (NO FORK PER SERVICE)
+  local music_pattern
+  printf -v music_pattern '%s|' "${MUSIC_SERVICES[@]}"
+  music_pattern="${music_pattern%|}"  # strip trailing |
 
-    # Check for dedicated desktop apps
-    if pgrep -i -f "$service" &> /dev/null; then
-      found_services+=("$service (process)")
+  # Check processes (single fork)
+  local matching_services
+  if matching_services=$(pgrep -i -f "$music_pattern" 2>/dev/null); then
+    while read -r pid; do
+      local proc_name
+      proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
+      found_services+=("$proc_name (process)")
+    done <<< "$matching_services"
+  fi
+
+  # Check windows (use optimized is_focus_app_running logic: single xdotool regex call)
+  if command -v xdotool &> /dev/null && [[ ${#MUSIC_SERVICES[@]} -gt 0 ]]; then
+    local xdotool_regex
+    printf -v xdotool_regex '%s|' "${MUSIC_SERVICES[@]}"
+    xdotool_regex="${xdotool_regex%|}"  # strip trailing |
+    if xdotool search --name "$xdotool_regex" &> /dev/null 2>&1; then
+      found_services+=("music service (window)")
     fi
-  done
+  fi
 
   if [[ ${#found_services[@]} -gt 0 ]]; then
     printf '%s\n' "${found_services[@]}"
@@ -185,6 +203,7 @@ notify_user() {
 
 # Instant monitoring loop - uses polling at high frequency ONLY when focus app is detected
 # When focus app active: checks every 0.5s. When idle: checks every 3s. Reduces fork overhead.
+# OPTIMIZATION: Single batched pgrep call instead of multiple separate calls
 instant_monitor_loop() {
   log_message "=== Music Parallelism INSTANT Monitor Started ==="
   log_message "Focus apps (windows): ${FOCUS_APPS_WINDOWS[*]}"
@@ -192,18 +211,14 @@ instant_monitor_loop() {
   log_message "Polling: 0.5s when focus app active, 3s when idle (optimized for lower fork overhead)"
 
   while true; do
-    # Only check if focus app is running
+    # Only check if focus app is running (uses optimized is_focus_app_running from common.sh)
     if is_focus_app_running &> /dev/null; then
-      # Instant kill youtube-music if detected
-      if pgrep -f "youtube-music" &> /dev/null; then
-        pkill -9 -f "youtube-music" 2> /dev/null || true
-        log_message "INSTANT KILL: YouTube Music terminated"
-        notify-send -u normal -t 2000 "🎵 YouTube Music killed" "Focus mode active" 2> /dev/null || true
-      fi
-      # Also check other music services
-      if pgrep -x "spotify" &> /dev/null; then
-        pkill -9 -x "spotify" 2> /dev/null || true
-        log_message "INSTANT KILL: Spotify terminated"
+      # OPTIMIZATION: Single pgrep call with regex instead of multiple calls
+      # Kill youtube-music OR spotify with one command (use pkill to avoid pipe fork)
+      if pgrep -i -f "youtube-music|spotify" &> /dev/null; then
+        pkill -i -f "youtube-music|spotify" 2> /dev/null || true
+        log_message "INSTANT KILL: Music services terminated"
+        notify-send -u normal -t 2000 "🎵 Music killed" "Focus mode active" 2> /dev/null || true
       fi
       sleep "$FAST_CHECK_INTERVAL"  # High-frequency check while focus app is active
     else
@@ -251,23 +266,27 @@ show_status() {
   echo "Focus Applications (window-based detection):"
   local focus_running=false
 
-  # Check windows
-  if command -v xdotool &> /dev/null; then
-    for app in "${FOCUS_APPS_WINDOWS[@]}"; do
-      if xdotool search --name "$app" &> /dev/null 2>&1; then
-        echo "  ✓ $app (WINDOW OPEN)"
-        focus_running=true
-      fi
-    done
-  fi
-
-  # Check processes
-  for app in "${FOCUS_APPS_PROCESSES[@]}"; do
-    if pgrep -f "$app" &> /dev/null; then
-      echo "  ✓ $app (PROCESS RUNNING)"
+  # Check windows (OPTIMIZED: single xdotool call with combined regex)
+  if command -v xdotool &> /dev/null && [[ ${#FOCUS_APPS_WINDOWS[@]} -gt 0 ]]; then
+    local regex
+    printf -v regex '%s|' "${FOCUS_APPS_WINDOWS[@]}"
+    regex="${regex%|}"  # strip trailing |
+    if xdotool search --name "$regex" &> /dev/null 2>&1; then
+      echo "  ✓ Focus window detected"
       focus_running=true
     fi
-  done
+  fi
+
+  # Check processes (OPTIMIZED: single pgrep call with combined regex)
+  if [[ ${#FOCUS_APPS_PROCESSES[@]} -gt 0 ]]; then
+    local proc_pattern
+    printf -v proc_pattern '%s|' "${FOCUS_APPS_PROCESSES[@]}"
+    proc_pattern="${proc_pattern%|}"  # strip trailing |
+    if pgrep -f "$proc_pattern" &> /dev/null; then
+      echo "  ✓ Focus process running"
+      focus_running=true
+    fi
+  fi
 
   if ! $focus_running; then
     echo "  (none detected)"

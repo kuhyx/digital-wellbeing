@@ -16,7 +16,7 @@ shift "$COMMON_ARGS_SHIFT"
 
 echo "PC Startup Time Monitor for Arch Linux"
 echo "======================================"
-echo "Current Date: $(date)"
+echo "Current Date: $(get_datetime)"
 echo "User: $(get_actual_user)"
 if [[ $INTERACTIVE_MODE == "true" ]]; then
 	echo "Mode: Interactive (prompts enabled)"
@@ -33,91 +33,36 @@ echo "User home: $USER_HOME"
 
 # Function to check if today is a monitored day
 is_monitored_day() {
-	local day_of_week
-	day_of_week=$(date +%u) # 1=Monday, 7=Sunday
-
-	# Check if today is Monday (1), Friday (5), Saturday (6), or Sunday (7)
-	if [[ $day_of_week == "1" ]] || [[ $day_of_week == "5" ]] || [[ $day_of_week == "6" ]] || [[ $day_of_week == "7" ]]; then
-		return 0 # Yes, it's a monitored day
-	else
-		return 1 # No, it's not a monitored day
-	fi
+	is_day_of_week 1 5 6 7  # 1=Monday, 5=Friday, 6=Saturday, 7=Sunday
 }
 
 # Function to check if current time is between 5AM and 8AM
 is_current_time_in_window() {
-	local current_hour current_hour_num
-	current_hour=$(date +%H)
-	current_hour_num=$((10#$current_hour)) # Convert to decimal to avoid octal issues
-
-	if [[ $current_hour_num -ge 5 ]] && [[ $current_hour_num -lt 8 ]]; then
-		return 0 # Yes, current time is in the 5AM-8AM window
-	else
-		return 1 # No, current time is outside the window
-	fi
+	is_hour_in_range 5 8
 }
 
 # Function to check if PC was booted between 5AM-8AM today
 was_booted_in_window_today() {
-	local today boot_time
-	today=$(date +%Y-%m-%d)
-	boot_time=""
+	local boot_datetime boot_date boot_hour boot_hour_num today
+	today=$(get_date)
+	boot_datetime=$(get_boot_datetime)
 
-	# Get the last boot time using multiple methods for reliability
-	if command -v uptime &>/dev/null; then
-		# Method 1: Calculate boot time from uptime
-		local uptime_seconds
-		uptime_seconds=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo "0")
-		if [[ $uptime_seconds -gt 0 ]]; then
-			boot_time=$(date -d "@$(($(date +%s) - uptime_seconds))" +"%Y-%m-%d %H:%M:%S")
-		fi
-	fi
-
-	# Method 2: Use systemd if available (fallback)
-	if [[ -z $boot_time ]] && command -v systemctl &>/dev/null; then
-		boot_time=$(systemd-analyze | grep "Startup finished" | sed -n 's/.*finished in .* = \(.*\)$/\1/p' 2>/dev/null || echo "")
-		if [[ -n $boot_time ]]; then
-			# This gives us relative time, need to calculate absolute time
-			local current_time uptime_sec
-			current_time=$(date +%s)
-			uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo "0")
-			boot_time=$(date -d "@$((current_time - uptime_sec))" +"%Y-%m-%d %H:%M:%S")
-		fi
-	fi
-
-	# Method 3: Use who -b (fallback)
-	if [[ -z $boot_time ]] && command -v who &>/dev/null; then
-		boot_time=$(who -b | awk '{print $3, $4}' 2>/dev/null || echo "")
-		if [[ -n $boot_time ]]; then
-			boot_time="$today $boot_time"
-		fi
-	fi
-
-	# Method 4: Use /proc/uptime as final fallback
-	if [[ -z $boot_time ]]; then
-		local uptime_seconds
-		uptime_seconds=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo "0")
-		boot_time=$(date -d "@$(($(date +%s) - uptime_seconds))" +"%Y-%m-%d %H:%M:%S")
-	fi
-
-	echo "Boot time detected: $boot_time"
+	echo "Boot time detected: $boot_datetime"
 
 	# Check if boot time is from today
-	local boot_date
-	boot_date=$(echo "$boot_time" | cut -d' ' -f1)
+	boot_date=$(echo "$boot_datetime" | cut -d' ' -f1)
 	if [[ $boot_date != "$today" ]]; then
 		echo "PC was not booted today (boot date: $boot_date, today: $today)"
 		return 1 # Not booted today
 	fi
 
 	# Extract hour from boot time
-	local boot_hour boot_hour_num
-	boot_hour=$(echo "$boot_time" | cut -d' ' -f2 | cut -d':' -f1)
+	boot_hour=$(echo "$boot_datetime" | cut -d' ' -f2 | cut -d':' -f1)
 	boot_hour_num=$((10#$boot_hour)) # Convert to decimal
 
 	echo "Boot hour: $boot_hour_num"
 
-	# Check if boot time was between 5AM (5) and 8AM (7, since we want before 8AM)
+	# Check if boot time was between 5AM (5) and 8AM (8, before 8AM)
 	if [[ $boot_hour_num -ge 5 ]] && [[ $boot_hour_num -lt 8 ]]; then
 		echo "PC was booted in the expected window (5AM-8AM)"
 		return 0 # Yes, booted in window
@@ -130,9 +75,9 @@ was_booted_in_window_today() {
 # Function to show notification/warning
 show_startup_warning() {
 	local day_name current_time today
-	day_name=$(date +%A)
-	current_time=$(date +"%H:%M")
-	today=$(date +%Y-%m-%d)
+	day_name=$(get_day_name)
+	current_time=$(printf '%(%H:%M)T' -1)
+	today=$(get_date)
 
 	echo ""
 	echo "⚠️  PC STARTUP TIME WARNING"

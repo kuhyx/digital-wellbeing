@@ -61,14 +61,14 @@ ensure_state_dir() {
 # Log message with timestamp
 log_message() {
 	local msg
-	msg="$(date '+%Y-%m-%d %H:%M:%S') - $1"
+	msg="$(printf '%(%Y-%m-%d %H:%M:%S)T' -1) - $1"
 	echo "$msg" >&2
 	echo "$msg" >>"$LOG_FILE" 2>/dev/null || true
 }
 
 # Get current hour key (YYYY-MM-DD-HH format)
 get_hour_key() {
-	date '+%Y-%m-%d-%H'
+	printf '%(%Y-%m-%d-%H)T' -1
 }
 
 # Get state file path for an app
@@ -179,7 +179,7 @@ kill_app() {
 is_autoclose_suspended() {
 	local app="$1"
 	local today
-	today=$(date '+%Y-%m-%d')
+	today=$(printf '%(%Y-%m-%d)T' -1)
 	local suspend_file="$STATE_DIR/${app}.suspend-autoclose"
 
 	if [[ -f $suspend_file ]]; then
@@ -220,8 +220,8 @@ launch_with_timer() {
 	# Give Electron apps time to fork before we start polling
 	sleep 2
 
-	# Record state
-	echo "$app_pid $(date +%s)" >"$running_file"
+	# Record state (FORK-FREE: use printf %s for timestamp)
+	echo "$app_pid $(printf '%(%s)T' -1)" >"$running_file"
 	log_message "LAUNCHED: $app with PID $app_pid (auto-close in ${timeout_minutes}m)"
 
 	# Spawn the auto-close daemon in a completely detached subshell
@@ -256,7 +256,7 @@ launch_with_timer() {
 			# Kill all matching processes (handles forked Electron children)
 			kill_app "$real_binary"
 
-			echo "$(date '+%Y-%m-%d %H:%M:%S') - AUTO-CLOSED: $app after ${timeout_minutes}m" >>"$LOG_FILE" 2>/dev/null || true
+			printf '%(%Y-%m-%d %H:%M:%S)T - AUTO-CLOSED: %s after %dm\n' -1 "$app" "${timeout_minutes}" >>"$LOG_FILE" 2>/dev/null || true
 		fi
 
 		rm -f "$running_file" 2>/dev/null || true

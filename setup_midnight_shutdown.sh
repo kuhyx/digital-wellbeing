@@ -829,19 +829,19 @@ if [[ -z "${MORNING_END_HOUR:-}" ]]; then
     exit 1
 fi
 
-# Get current time and day
-current_hour=$(date +%H)
-current_minute=$(date +%M)
+# Get current time and day (fork-free bash builtins)
+current_hour=$(printf '%(%H)T' -1)
+current_minute=$(printf '%(%M)T' -1)
 current_time_minutes=$((10#$current_hour * 60 + 10#$current_minute))
-day_of_week=$(date +%u)  # 1=Monday, 7=Sunday
-day_name=$(date +%A)
+day_of_week=$(printf '%(%u)T' -1)  # 1=Monday, 7=Sunday
+day_name=$(printf '%(%A)T' -1)
 
 # Calculate minute thresholds from config
 mon_wed_minutes=$((MON_WED_HOUR * 60))
 thu_sun_minutes=$((THU_SUN_HOUR * 60))
 morning_end_minutes=$((MORNING_END_HOUR * 60))
 
-logger -t day-specific-shutdown "Checking shutdown conditions at $(date) - Day: $day_name ($day_of_week), Time: $current_hour:$current_minute"
+logger -t day-specific-shutdown "Checking shutdown conditions at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1) - Day: $day_name ($day_of_week), Time: $current_hour:$current_minute"
 
 # Determine if we should shutdown based on day and time
 should_shutdown=false
@@ -879,11 +879,11 @@ else
 fi
 
 if [[ $should_shutdown == true ]]; then
-    echo "$(date): Executing shutdown - current time $current_hour:$current_minute is within shutdown window for $day_name"
-    logger -t day-specific-shutdown "Executing scheduled shutdown at $(date)"
+    printf '%(%Y-%m-%d %H:%M:%S)T: Executing shutdown - current time %s:%s is within shutdown window for %s\n' -1 "$current_hour" "$current_minute" "$day_name"
+    logger -t day-specific-shutdown "Executing scheduled shutdown at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1)"
     /usr/bin/systemctl poweroff
 else
-    echo "$(date): Skipping shutdown - not within shutdown window for $day_name (current: $current_hour:$current_minute)"
+    printf '%(%Y-%m-%d %H:%M:%S)T: Skipping shutdown - not within shutdown window for %s (current: %s:%s)\n' -1 "$day_name" "$current_hour" "$current_minute"
     logger -t day-specific-shutdown "Skipped shutdown - not within shutdown window for $day_name (current: $current_hour:$current_minute)"
 fi
 EOF

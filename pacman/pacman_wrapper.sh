@@ -73,36 +73,39 @@ load_policy_lists() {
 	local whitelist_file="$script_dir/pacman_whitelist.txt"
 	local greylist_file="$script_dir/pacman_greylist.txt"
 
+	read_policy_list_file() {
+		local file_path="$1"
+		local -n target_array="$2"
+		local line=""
+
+		target_array=()
+		while IFS= read -r line || [[ -n $line ]]; do
+			line="${line%$'\r'}"
+			if [[ $line =~ ^[[:space:]]*(#|$) ]]; then
+				continue
+			fi
+			target_array+=("${line,,}")
+		done < "$file_path"
+	}
+
 	if [[ -f $blocked_file ]]; then
-		mapfile -t BLOCKED_KEYWORDS_LIST < <(sed 's/\r$//' "$blocked_file" | grep -Ev '^[[:space:]]*(#|$)' || true)
+		read_policy_list_file "$blocked_file" BLOCKED_KEYWORDS_LIST
 	else
 		BLOCKED_KEYWORDS_LIST=()
 		echo -e "${YELLOW}Warning:${NC} Missing blocked keywords file at $blocked_file" >&2
 	fi
 
 	if [[ -f $whitelist_file ]]; then
-		mapfile -t WHITELISTED_NAMES_LIST < <(sed 's/\r$//' "$whitelist_file" | grep -Ev '^[[:space:]]*(#|$)' || true)
+		read_policy_list_file "$whitelist_file" WHITELISTED_NAMES_LIST
 	else
 		WHITELISTED_NAMES_LIST=()
 	fi
 
 	if [[ -f $greylist_file ]]; then
-		mapfile -t GREYLISTED_KEYWORDS_LIST < <(sed 's/\r$//' "$greylist_file" | grep -Ev '^[[:space:]]*(#|$)' || true)
+		read_policy_list_file "$greylist_file" GREYLISTED_KEYWORDS_LIST
 	else
 		GREYLISTED_KEYWORDS_LIST=()
 	fi
-
-	for i in "${!BLOCKED_KEYWORDS_LIST[@]}"; do
-		BLOCKED_KEYWORDS_LIST[i]="${BLOCKED_KEYWORDS_LIST[i],,}"
-	done
-
-	for i in "${!WHITELISTED_NAMES_LIST[@]}"; do
-		WHITELISTED_NAMES_LIST[i]="${WHITELISTED_NAMES_LIST[i],,}"
-	done
-
-	for i in "${!GREYLISTED_KEYWORDS_LIST[@]}"; do
-		GREYLISTED_KEYWORDS_LIST[i]="${GREYLISTED_KEYWORDS_LIST[i],,}"
-	done
 
 	POLICY_LISTS_LOADED=1
 }
@@ -112,12 +115,52 @@ needs_unlock() {
 	# Also include -Su/-Syu/-Syuu when -S is part of the combined flag
 	for arg in "$@"; do
 		case "$arg" in
-		-S* | -U | -R | --sync | --upgrade | --remove)
+		-S*)
+			return 0
+			;;
+		-U)
+			return 0
+			;;
+		-R)
+			return 0
+			;;
+		--sync)
+			return 0
+			;;
+		--upgrade)
+			return 0
+			;;
+		--remove)
 			return 0
 			;;
 		esac
 	done
 	return 1
+}
+
+pacman_hooks_manage_hosts_guard() {
+	local pre_hook="/etc/pacman.d/hooks/10-unlock-etc-hosts.hook"
+	local post_hook="/etc/pacman.d/hooks/90-relock-etc-hosts.hook"
+	local pre_exec="/usr/local/share/hosts-guard/pacman-pre-unlock-hosts.sh"
+	local post_exec="/usr/local/share/hosts-guard/pacman-post-relock-hosts.sh"
+
+	if [[ ! -f $pre_hook || ! -f $post_hook ]]; then
+		return 1
+	fi
+
+	grep -Fq "$pre_exec" "$pre_hook" && grep -Fq "$post_exec" "$post_hook"
+}
+
+should_use_wrapper_hosts_guard_fallback() {
+	if ! needs_unlock "$@"; then
+		return 1
+	fi
+
+	if pacman_hooks_manage_hosts_guard; then
+		return 1
+	fi
+
+	return 0
 }
 
 # Run pre/post hooks for /etc/hosts guard if present
@@ -203,22 +246,55 @@ function show_help() {
 # Function to display a message before executing
 function display_operation() {
 	case "$1" in
-	-S | -Sy | -S\ *)
+	-S)
+		echo -e "${BLUE}Installing packages...${NC}" >&2
+		;;
+	-Sy)
+		echo -e "${BLUE}Installing packages...${NC}" >&2
+		;;
+	-S\ *)
 		echo -e "${BLUE}Installing packages...${NC}" >&2
 		;;
 	-Syu | -Syyu)
 		echo -e "${BLUE}Updating system...${NC}" >&2
 		;;
-	-R | -Rs | -Rns | -R\ *)
+	-R)
 		echo -e "${YELLOW}Removing packages...${NC}" >&2
 		;;
-	-Ss | -Ss\ *)
+	-Rs)
+		echo -e "${YELLOW}Removing packages...${NC}" >&2
+		;;
+	-Rns)
+		echo -e "${YELLOW}Removing packages...${NC}" >&2
+		;;
+	-R\ *)
+		echo -e "${YELLOW}Removing packages...${NC}" >&2
+		;;
+	-Ss)
 		echo -e "${CYAN}Searching for packages...${NC}" >&2
 		;;
-	-Q | -Qs | -Qi | -Ql | -Q\ *)
+	-Ss\ *)
+		echo -e "${CYAN}Searching for packages...${NC}" >&2
+		;;
+	-Q)
 		echo -e "${CYAN}Querying package database...${NC}" >&2
 		;;
-	-U | -U\ *)
+	-Qs)
+		echo -e "${CYAN}Querying package database...${NC}" >&2
+		;;
+	-Qi)
+		echo -e "${CYAN}Querying package database...${NC}" >&2
+		;;
+	-Ql)
+		echo -e "${CYAN}Querying package database...${NC}" >&2
+		;;
+	-Q\ *)
+		echo -e "${CYAN}Querying package database...${NC}" >&2
+		;;
+	-U)
+		echo -e "${BLUE}Installing local packages...${NC}" >&2
+		;;
+	-U\ *)
 		echo -e "${BLUE}Installing local packages...${NC}" >&2
 		;;
 	-Scc)
@@ -280,9 +356,9 @@ get_lock_holders() {
 	local lock_file="$1"
 	holders=()
 	if command -v fuser >/dev/null 2>&1; then
-		mapfile -t holders < <(fuser "$lock_file" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' || true)
+		read -r -a holders <<< "$(fuser "$lock_file" 2>/dev/null || true)"
 	elif command -v lsof >/dev/null 2>&1; then
-		mapfile -t holders < <(lsof -t "$lock_file" 2>/dev/null | grep -E '^[0-9]+$' || true)
+		mapfile -t holders < <(lsof -t "$lock_file" 2>/dev/null || true)
 	fi
 	# Filter out our own PID
 	if [[ ${#holders[@]} -gt 0 ]]; then
@@ -677,20 +753,23 @@ echo -e "${GREEN}Executing:${NC} $PACMAN_BIN $*" >&2
 # Record start time for statistics
 start_time=$(date +%s)
 
-# Execute the real pacman command (with /etc/hosts guard handling)
-if needs_unlock "$@"; then
-	pre_unlock_hosts
-fi
-
 # Handle a possible stale DB lock before executing
 if ! check_and_handle_db_lock "$@"; then
 	exit 1
 fi
 
+manual_hosts_guard=0
+
+# Execute the real pacman command (with /etc/hosts guard handling)
+if should_use_wrapper_hosts_guard_fallback "$@"; then
+	pre_unlock_hosts
+	manual_hosts_guard=1
+fi
+
 "$PACMAN_BIN" "$@"
 exit_code=$?
 
-if needs_unlock "$@"; then
+if [[ $manual_hosts_guard -eq 1 ]]; then
 	post_relock_hosts
 fi
 
