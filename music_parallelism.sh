@@ -27,7 +27,8 @@ LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism"
 mkdir -p "$LOG_DIR" 2> /dev/null || true
 export LOG_FILE="$LOG_DIR/music-parallelism.log"
 CHECK_INTERVAL=3
-FAST_CHECK_INTERVAL=0.5
+FAST_CHECK_INTERVAL=2
+IDLE_CHECK_INTERVAL=10
 
 # Override focus apps with extended list for this script
 FOCUS_APPS_WINDOWS=(
@@ -223,7 +224,7 @@ instant_monitor_loop() {
       sleep "$FAST_CHECK_INTERVAL"  # High-frequency check while focus app is active
     else
       # No focus app detected: use longer sleep to reduce fork overhead significantly
-      sleep 3
+      sleep "$IDLE_CHECK_INTERVAL"
     fi
   done
 }
