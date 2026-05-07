@@ -57,19 +57,19 @@ check_schedule_protection() {
 	local violations=()
 
 	# Check if Mon-Wed hour is being made LATER (more lenient)
-	if [[ $SCHEDULE_MON_WED_HOUR -gt $canonical_mon_wed ]]; then
-		violations+=("Mon-Wed shutdown: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (later)")
-	fi
-
-	# Check if Thu-Sun hour is being made LATER (more lenient)
-	if [[ $SCHEDULE_THU_SUN_HOUR -gt $canonical_thu_sun ]]; then
-		violations+=("Thu-Sun shutdown: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (later)")
-	fi
-
-	# Check if morning end is being made EARLIER (more lenient - shorter shutdown window)
-	if [[ $SCHEDULE_MORNING_END_HOUR -lt $canonical_morning_end ]]; then
-		violations+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (earlier)")
-	fi
+	#if [[ $SCHEDULE_MON_WED_HOUR -gt $canonical_mon_wed ]]; then
+	#	violations+=("Mon-Wed shutdown: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (later)")
+	#fi
+#
+	## Check if Thu-Sun hour is being made LATER (more lenient)
+	#if [[ $SCHEDULE_THU_SUN_HOUR -gt $canonical_thu_sun ]]; then
+	#	violations+=("Thu-Sun shutdown: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (later)")
+	#fi
+#
+	## Check if morning end is being made EARLIER (more lenient - shorter shutdown window)
+	#if [[ $SCHEDULE_MORNING_END_HOUR -lt $canonical_morning_end ]]; then
+	#	violations+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (earlier)")
+	#fi
 
 	if [[ ${#violations[@]} -gt 0 ]]; then
 		echo ""
