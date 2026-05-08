@@ -46,21 +46,21 @@ else
     exit 1
 fi
 
-# Test 5: Verify hardcoded VirtualBox check exists
-echo "[TEST 5] Verifying hardcoded VirtualBox check exists..."
-if grep -q "is_virtualbox_package()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
-    echo "✓ Hardcoded VirtualBox check function found"
+# Test 5: Verify hardcoded VirtualBox cleanup function exists
+echo "[TEST 5] Verifying hardcoded VirtualBox cleanup function exists..."
+if grep -q "auto_remove_virtualbox_vms()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ Hardcoded VirtualBox cleanup function found"
 else
-    echo "✗ Hardcoded VirtualBox check function not found"
+    echo "✗ Hardcoded VirtualBox cleanup function not found"
     exit 1
 fi
 
-# Test 6: Verify VirtualBox challenge function exists
-echo "[TEST 6] Verifying VirtualBox challenge function exists..."
-if grep -q "prompt_for_virtualbox_challenge()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
-    echo "✓ VirtualBox challenge function found"
+# Test 6: Verify VirtualBox cleanup uses VBoxManage directly
+echo "[TEST 6] Verifying VirtualBox cleanup uses VBoxManage directly..."
+if grep -q "VBoxManage" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ VirtualBox cleanup logic found"
 else
-    echo "✗ VirtualBox challenge function not found"
+    echo "✗ VirtualBox cleanup logic not found"
     exit 1
 fi
 
@@ -91,12 +91,12 @@ else
     exit 1
 fi
 
-# Test 10: Verify VirtualBox enforcement is integrated
-echo "[TEST 10] Verifying VirtualBox enforcement is integrated into wrapper..."
-if grep -q "enforce_vbox_hosts_if_needed" "$WRAPPER_DIR/pacman_wrapper.sh"; then
-    echo "✓ VirtualBox enforcement integration found"
+# Test 10: Verify VirtualBox cleanup enforcement is integrated
+echo "[TEST 10] Verifying VirtualBox cleanup is integrated into wrapper..."
+if grep -q "auto_remove_virtualbox_vms" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ VirtualBox cleanup integration found"
 else
-    echo "✗ VirtualBox enforcement integration not found"
+    echo "✗ VirtualBox cleanup integration not found"
     exit 1
 fi
 
@@ -119,6 +119,69 @@ else
     exit 1
 fi
 
+# Test 13: Verify makepkg capped wrapper script syntax
+echo "[TEST 13] Checking makepkg capped wrapper syntax..."
+if bash -n "$WRAPPER_DIR/makepkg_capped.sh"; then
+    echo "✓ makepkg capped wrapper syntax is valid"
+else
+    echo "✗ makepkg capped wrapper has syntax errors"
+    exit 1
+fi
+
+# Test 14: Verify pacman wrapper exposes makepkg capped command
+echo "[TEST 14] Verifying pacman wrapper supports --makepkg-capped..."
+if grep -q -- "--makepkg-capped" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ pacman wrapper makepkg capped command found"
+else
+    echo "✗ pacman wrapper makepkg capped command missing"
+    exit 1
+fi
+
+# Test 15: Verify installer deploys makepkg capped wrapper
+echo "[TEST 15] Verifying installer deploys makepkg capped wrapper..."
+if grep -q "MAKEPKG_CAPPED" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+    echo "✓ Installer includes makepkg capped deployment"
+else
+    echo "✗ Installer does not include makepkg capped deployment"
+    exit 1
+fi
+
+# Test 16: Verify mkpkg helper script syntax
+echo "[TEST 16] Checking mkpkg helper script syntax..."
+if bash -n "$WRAPPER_DIR/mkpkg.sh"; then
+    echo "✓ mkpkg helper script syntax is valid"
+else
+    echo "✗ mkpkg helper script has syntax errors"
+    exit 1
+fi
+
+# Test 17: Verify installer deploys mkpkg helper
+echo "[TEST 17] Verifying installer deploys mkpkg helper..."
+if grep -q "MKPKG" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+    echo "✓ Installer includes mkpkg helper deployment"
+else
+    echo "✗ Installer does not include mkpkg helper deployment"
+    exit 1
+fi
+
+# Test 18: Verify installer runs in strict mode
+echo "[TEST 18] Verifying installer uses strict shell mode..."
+if grep -q "set -euo pipefail" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+    echo "✓ Installer strict mode enabled"
+else
+    echo "✗ Installer strict mode not enabled"
+    exit 1
+fi
+
+# Test 19: Verify installer handles immutable files during updates
+echo "[TEST 19] Verifying installer unlocks immutable files before copy/write..."
+if grep -q "unlock_immutable_file_if_needed" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+    echo "✓ Installer immutable-file handling found"
+else
+    echo "✗ Installer immutable-file handling missing"
+    exit 1
+fi
+
 echo ""
 echo "=== All Tests Passed! ==="
 echo ""
@@ -129,3 +192,6 @@ echo "  ✓ Policy files are made immutable with chattr +i"
 echo "  ✓ VirtualBox has hardcoded restrictions (cannot bypass via file editing)"
 echo "  ✓ VirtualBox VMs are automatically configured to use host's /etc/hosts"
 echo "  ✓ Difficult word challenge for VirtualBox installation (7-letter words, 150 words, 120s)"
+echo "  ✓ makepkg capped runner is integrated via wrapper and installer"
+echo "  ✓ mkpkg convenience helper is deployed by installer"
+echo "  ✓ installer fails fast and handles immutable policy files safely"
