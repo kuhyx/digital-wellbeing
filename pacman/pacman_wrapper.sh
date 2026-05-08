@@ -12,6 +12,7 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PACMAN_BIN="/usr/bin/pacman"
+MAKEPKG_CAPPED_BIN="/usr/local/bin/makepkg_capped"
 
 declare -a BLOCKED_KEYWORDS_LIST=()
 declare -a WHITELISTED_NAMES_LIST=()
@@ -241,6 +242,22 @@ function show_help() {
 	echo ""
 	echo "Additional commands:"
 	echo "  --help-wrapper    Show this help message"
+	echo "  --makepkg-capped  Run makepkg in a constrained systemd user scope"
+	echo "                   (forward remaining args to makepkg)"
+}
+
+run_makepkg_capped() {
+	if [[ ! -x $MAKEPKG_CAPPED_BIN ]]; then
+		echo -e "${RED}makepkg capped wrapper not found at ${MAKEPKG_CAPPED_BIN}${NC}" >&2
+		echo -e "${YELLOW}Run install_pacman_wrapper.sh to install it.${NC}" >&2
+		return 1
+	fi
+
+	if [[ $EUID -eq 0 && -n ${SUDO_USER:-} ]]; then
+		exec sudo -u "$SUDO_USER" "$MAKEPKG_CAPPED_BIN" "$@"
+	fi
+
+	exec "$MAKEPKG_CAPPED_BIN" "$@"
 }
 
 # Function to display a message before executing
@@ -705,6 +722,11 @@ function prompt_for_greylist_challenge() {
 if [[ $1 == "--help-wrapper" ]]; then
 	show_help
 	exit 0
+fi
+
+if [[ ${1:-} == "--makepkg-capped" ]]; then
+	shift
+	run_makepkg_capped "$@"
 fi
 
 # CRITICAL: Verify policy file integrity before any operations

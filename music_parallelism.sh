@@ -26,9 +26,10 @@ fi
 LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism"
 mkdir -p "$LOG_DIR" 2> /dev/null || true
 export LOG_FILE="$LOG_DIR/music-parallelism.log"
-CHECK_INTERVAL=3
-FAST_CHECK_INTERVAL=2
-IDLE_CHECK_INTERVAL=10
+CHECK_INTERVAL=15
+FAST_CHECK_INTERVAL=5
+IDLE_CHECK_INTERVAL=30
+ENFORCEMENT_COOLDOWN=20
 
 # Override focus apps with extended list for this script
 FOCUS_APPS_WINDOWS=(
@@ -88,14 +89,9 @@ find_music_services() {
   printf -v music_pattern '%s|' "${MUSIC_SERVICES[@]}"
   music_pattern="${music_pattern%|}"  # strip trailing |
 
-  # Check processes (single fork)
-  local matching_services
-  if matching_services=$(pgrep -i -f "$music_pattern" 2>/dev/null); then
-    while read -r pid; do
-      local proc_name
-      proc_name=$(ps -p "$pid" -o comm= 2>/dev/null || echo "unknown")
-      found_services+=("$proc_name (process)")
-    done <<< "$matching_services"
+  # Check processes (single fork, no per-PID helpers)
+  if pgrep -i -f "$music_pattern" &> /dev/null; then
+    found_services+=("music process")
   fi
 
   # Check windows (use optimized is_focus_app_running logic: single xdotool regex call)
@@ -118,69 +114,24 @@ find_music_services() {
 # Kill music services
 kill_music_services() {
   local killed=false
+  local process_pattern='youtube-music|spotify|tidal|deezer|Amazon Music|amazon music'
+  local window_pattern='YouTube Music|music\.youtube\.com|music\.apple\.com|soundcloud\.com|pandora\.com|deezer\.com|tidal\.com'
 
-  # Kill YouTube Music browser tabs
-  # YouTube Music runs in browser, so we need to close specific tabs
-  # We use xdotool to find and close windows with "YouTube Music" or "music.youtube.com"
+  # Close browser tabs for web-based music services via one xdotool search
   if command -v xdotool &> /dev/null; then
-    # Find windows with YouTube Music in title
-    local yt_music_windows
-    yt_music_windows=$(xdotool search --name "YouTube Music" 2> /dev/null || true)
-    for wid in $yt_music_windows; do
-      if [[ -n $wid ]]; then
-        # Get window name for logging
-        local wname
-        wname=$(xdotool getwindowname "$wid" 2> /dev/null || echo "unknown")
-        # Only close if it's YouTube Music, not regular YouTube
-        if [[ $wname == *"YouTube Music"* ]] || [[ $wname == *"music.youtube.com"* ]]; then
-          log_message "Closing YouTube Music window: $wname (ID: $wid)"
-          xdotool windowclose "$wid" 2> /dev/null || true
-          killed=true
-        fi
-      fi
-    done
-  fi
-
-  # Kill YouTube Music Electron app
-  if pgrep -f "youtube-music" &> /dev/null; then
-    log_message "Killing YouTube Music app"
-    pkill -9 -f "youtube-music" 2> /dev/null || true
-    killed=true
-  fi
-
-  # Kill Spotify
-  if pgrep -x "spotify" &> /dev/null; then
-    log_message "Killing Spotify"
-    pkill -9 -x "spotify" 2> /dev/null || true
-    killed=true
-  fi
-
-  # Kill other music streaming app processes
-  local music_processes=("tidal" "deezer" "Amazon Music")
-  for proc in "${music_processes[@]}"; do
-    if pgrep -i -f "$proc" &> /dev/null; then
-      log_message "Killing $proc"
-      pkill -9 -i -f "$proc" 2> /dev/null || true
+    local windows wid
+    windows=$(xdotool search --name "$window_pattern" 2> /dev/null || true)
+    for wid in $windows; do
+      [[ -n $wid ]] || continue
+      xdotool windowclose "$wid" 2> /dev/null || true
       killed=true
-    fi
-  done
-
-  # Close browser tabs for web-based music services
-  if command -v xdotool &> /dev/null; then
-    local web_music_patterns=("music.apple.com" "soundcloud.com" "pandora.com" "deezer.com" "tidal.com")
-    for pattern in "${web_music_patterns[@]}"; do
-      local windows
-      windows=$(xdotool search --name "$pattern" 2> /dev/null || true)
-      for wid in $windows; do
-        if [[ -n $wid ]]; then
-          local wname
-          wname=$(xdotool getwindowname "$wid" 2> /dev/null || echo "unknown")
-          log_message "Closing music service window: $wname (ID: $wid)"
-          xdotool windowclose "$wid" 2> /dev/null || true
-          killed=true
-        fi
-      done
     done
+  fi
+
+  # Kill app processes with one regex-based pkill
+  if pgrep -i -f "$process_pattern" &> /dev/null; then
+    pkill -9 -i -f "$process_pattern" 2> /dev/null || true
+    killed=true
   fi
 
   if $killed; then
@@ -206,24 +157,30 @@ notify_user() {
 # When focus app active: checks every 0.5s. When idle: checks every 3s. Reduces fork overhead.
 # OPTIMIZATION: Single batched pgrep call instead of multiple separate calls
 instant_monitor_loop() {
+  local next_enforcement_ts=0
+  local current_ts=0
+  local focus_app=""
+
   log_message "=== Music Parallelism INSTANT Monitor Started ==="
   log_message "Focus apps (windows): ${FOCUS_APPS_WINDOWS[*]}"
   log_message "Focus apps (processes): ${FOCUS_APPS_PROCESSES[*]}"
-  log_message "Polling: 0.5s when focus app active, 3s when idle (optimized for lower fork overhead)"
+  log_message "Polling: ${FAST_CHECK_INTERVAL}s active, ${IDLE_CHECK_INTERVAL}s idle, ${ENFORCEMENT_COOLDOWN}s enforcement cooldown"
 
   while true; do
-    # Only check if focus app is running (uses optimized is_focus_app_running from common.sh)
-    if is_focus_app_running &> /dev/null; then
-      # OPTIMIZATION: Single pgrep call with regex instead of multiple calls
-      # Kill youtube-music OR spotify with one command (use pkill to avoid pipe fork)
-      if pgrep -i -f "youtube-music|spotify" &> /dev/null; then
-        pkill -i -f "youtube-music|spotify" 2> /dev/null || true
-        log_message "INSTANT KILL: Music services terminated"
-        notify-send -u normal -t 2000 "🎵 Music killed" "Focus mode active" 2> /dev/null || true
+    if focus_app=$(is_focus_app_running 2> /dev/null); then
+      current_ts=$(get_timestamp)
+      if (( current_ts >= next_enforcement_ts )); then
+        if find_music_services > /dev/null 2>&1; then
+          if kill_music_services; then
+            notify_user "$focus_app"
+            log_message "INSTANT KILL: Music services terminated"
+          fi
+        fi
+        next_enforcement_ts=$((current_ts + ENFORCEMENT_COOLDOWN))
       fi
-      sleep "$FAST_CHECK_INTERVAL"  # High-frequency check while focus app is active
+      sleep "$FAST_CHECK_INTERVAL"
     else
-      # No focus app detected: use longer sleep to reduce fork overhead significantly
+      next_enforcement_ts=0
       sleep "$IDLE_CHECK_INTERVAL"
     fi
   done
@@ -328,7 +285,7 @@ show_usage() {
   echo ""
   echo "Commands:"
   echo "  monitor  - Start monitoring (default, checks every ${CHECK_INTERVAL}s)"
-  echo "  instant  - Instant monitoring (checks every 0.5s for immediate kill)"
+  echo "  instant  - Instant monitoring (${FAST_CHECK_INTERVAL}s active / ${IDLE_CHECK_INTERVAL}s idle)"
   echo "  status   - Show current status of focus apps and music services"
   echo "  kill     - Immediately kill all music services"
   echo "  help     - Show this help message"

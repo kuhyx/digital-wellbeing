@@ -1,6 +1,8 @@
 #!/bin/bash
 # filepath: /home/kuhy/linux-configuration/scripts/install_pacman_wrapper.sh
 
+set -euo pipefail
+
 # Auto-sudo functionality
 if [ "$EUID" -ne 0 ]; then
   echo "Executing with sudo..."
@@ -22,12 +24,16 @@ WORDS_SOURCE="$(dirname "$0")/words.txt"
 BLOCKED_SOURCE="$(dirname "$0")/pacman_blocked_keywords.txt"
 WHITELIST_SOURCE="$(dirname "$0")/pacman_whitelist.txt"
 GREYLIST_SOURCE="$(dirname "$0")/pacman_greylist.txt"
+MAKEPKG_CAPPED_SOURCE="$(dirname "$0")/makepkg_capped.sh"
+MKPKG_SOURCE="$(dirname "$0")/mkpkg.sh"
 INSTALL_DIR="/usr/local/bin"
 WRAPPER_DEST="${INSTALL_DIR}/pacman_wrapper"
 WORDS_DEST="${INSTALL_DIR}/words.txt"
 BLOCKED_DEST="${INSTALL_DIR}/pacman_blocked_keywords.txt"
 WHITELIST_DEST="${INSTALL_DIR}/pacman_whitelist.txt"
 GREYLIST_DEST="${INSTALL_DIR}/pacman_greylist.txt"
+MAKEPKG_CAPPED_DEST="${INSTALL_DIR}/makepkg_capped"
+MKPKG_DEST="${INSTALL_DIR}/mkpkg"
 INTEGRITY_DIR="/var/lib/pacman-wrapper"
 INTEGRITY_FILE="${INTEGRITY_DIR}/policy.sha256"
 LEECHBLOCK_INSTALLER_SOURCE="$(dirname "$0")/../install_leechblock.sh"
@@ -41,6 +47,57 @@ LEECHBLOCK_SEEDER_DEST="${LEECHBLOCK_INSTALL_DIR}/seed_leechblock_storage.js"
 VBOX_ENFORCE_SOURCE="$(dirname "$0")/../virtualbox/enforce_vbox_hosts.sh"
 VBOX_INSTALL_DIR="/usr/local/share/digital_wellbeing/virtualbox"
 VBOX_ENFORCE_DEST="${VBOX_INSTALL_DIR}/enforce_vbox_hosts.sh"
+
+declare -a RELock_FILES=()
+
+is_immutable_file() {
+  local file_path="$1"
+  [[ -e "$file_path" ]] || return 1
+  [[ $(lsattr -d "$file_path" 2>/dev/null | awk '{print $1}') == *i* ]]
+}
+
+unlock_immutable_file_if_needed() {
+  local file_path="$1"
+  if ! command -v chattr >/dev/null 2>&1; then
+    return 0
+  fi
+  if is_immutable_file "$file_path"; then
+    chattr -i "$file_path"
+    RELock_FILES+=("$file_path")
+  fi
+}
+
+relock_files_on_exit() {
+  if ! command -v chattr >/dev/null 2>&1; then
+    return
+  fi
+  for file_path in "${RELock_FILES[@]}"; do
+    [[ -e "$file_path" ]] || continue
+    chattr +i "$file_path" 2>/dev/null || true
+  done
+}
+
+copy_managed_file() {
+  local source_file="$1"
+  local dest_file="$2"
+  local required="$3"
+  local label="$4"
+
+  if [[ ! -f "$source_file" ]]; then
+    if [[ "$required" == "required" ]]; then
+      echo -e "${RED}Error:${NC} Missing required ${label} at ${source_file}" >&2
+      exit 1
+    fi
+    echo -e "${YELLOW}Warning:${NC} Missing ${label} at ${source_file}" >&2
+    return
+  fi
+
+  unlock_immutable_file_if_needed "$dest_file"
+  cp "$source_file" "$dest_file"
+}
+
+trap relock_files_on_exit EXIT
+
 # Check if script is run as root
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}Please run as root${NC}"
@@ -57,26 +114,16 @@ echo -e "${CYAN}Installing pacman wrapper...${NC}"
 
 # Install the wrapper script
 echo -e "${BLUE}Copying wrapper script to ${WRAPPER_DEST}...${NC}"
-cp "$WRAPPER_SOURCE" "$WRAPPER_DEST"
-cp "$WORDS_SOURCE" "$WORDS_DEST"
-if [ -f "$BLOCKED_SOURCE" ]; then
-  cp "$BLOCKED_SOURCE" "$BLOCKED_DEST"
-else
-  echo -e "${YELLOW}Warning:${NC} Missing blocked keywords source at ${BLOCKED_SOURCE}${NC}"
-fi
-
-if [ -f "$WHITELIST_SOURCE" ]; then
-  cp "$WHITELIST_SOURCE" "$WHITELIST_DEST"
-else
-  echo -e "${YELLOW}Warning:${NC} Missing whitelist source at ${WHITELIST_SOURCE}${NC}"
-fi
-
-if [ -f "$GREYLIST_SOURCE" ]; then
-  cp "$GREYLIST_SOURCE" "$GREYLIST_DEST"
-else
-  echo -e "${YELLOW}Warning:${NC} Missing greylist source at ${GREYLIST_SOURCE}${NC}"
-fi
+copy_managed_file "$WRAPPER_SOURCE" "$WRAPPER_DEST" required "wrapper script"
+copy_managed_file "$WORDS_SOURCE" "$WORDS_DEST" required "words list"
+copy_managed_file "$BLOCKED_SOURCE" "$BLOCKED_DEST" required "blocked keywords list"
+copy_managed_file "$WHITELIST_SOURCE" "$WHITELIST_DEST" optional "whitelist"
+copy_managed_file "$GREYLIST_SOURCE" "$GREYLIST_DEST" required "greylist"
 chmod +x "$WRAPPER_DEST"
+copy_managed_file "$MAKEPKG_CAPPED_SOURCE" "$MAKEPKG_CAPPED_DEST" required "makepkg capped wrapper"
+chmod +x "$MAKEPKG_CAPPED_DEST"
+copy_managed_file "$MKPKG_SOURCE" "$MKPKG_DEST" required "mkpkg helper"
+chmod +x "$MKPKG_DEST"
 chmod 644 "$WORDS_DEST" "$BLOCKED_DEST" "$WHITELIST_DEST" "$GREYLIST_DEST" 2> /dev/null || true
 
 # Automatically use symbolic link installation method
@@ -97,6 +144,7 @@ chmod 755 "$INTEGRITY_DIR"
 
 # Generate checksums of policy files for integrity verification
 echo -e "${BLUE}Generating integrity checksums for policy files...${NC}"
+unlock_immutable_file_if_needed "$INTEGRITY_FILE"
 
 # Ensure all critical policy files exist before checksumming
 missing_files=()
@@ -181,6 +229,12 @@ echo -e "${BLUE}Creating symbolic link...${NC}"
 ln -sf "$WRAPPER_DEST" /usr/bin/pacman
 echo -e "${GREEN}Installation complete!${NC}"
 echo -e "Pacman is now wrapped. The original pacman is available at ${CYAN}/usr/bin/pacman.orig${NC}"
+if [ -f "$MAKEPKG_CAPPED_DEST" ]; then
+  echo -e "Run constrained package builds with: ${CYAN}pacman --makepkg-capped <args>${NC}"
+fi
+if [ -f "$MKPKG_DEST" ]; then
+  echo -e "Shortcut available: ${CYAN}mkpkg <args>${NC}"
+fi
 echo -e "${CYAN}Policy files are now protected with immutable attributes.${NC}"
 if [ -f "$VBOX_ENFORCE_DEST" ]; then
   echo -e "${CYAN}VirtualBox VMs will automatically be configured to use host's /etc/hosts.${NC}"
