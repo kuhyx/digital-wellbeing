@@ -182,6 +182,27 @@ else
     exit 1
 fi
 
+# Test 20: Verify wrapper uses builtin time helpers instead of external date
+echo "[TEST 20] Verifying wrapper uses builtin time helpers..."
+if grep -q "current_epoch()" "$WRAPPER_DIR/pacman_wrapper.sh" \
+  && grep -q "current_day_of_week()" "$WRAPPER_DIR/pacman_wrapper.sh" \
+  && grep -q "current_hour_24()" "$WRAPPER_DIR/pacman_wrapper.sh" \
+  && grep -q "current_day_name()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ Builtin time helper functions found"
+else
+    echo "✗ Builtin time helper functions missing"
+    exit 1
+fi
+
+# Test 21: Verify wrapper avoids external date calls in hot paths
+echo "[TEST 21] Verifying wrapper avoids external date calls in hot paths..."
+if ! grep -q "date +%s\|date +%u\|date +%H\|date +%A" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ External date calls removed from hot paths"
+else
+    echo "✗ External date calls still present in hot paths"
+    exit 1
+fi
+
 echo ""
 echo "=== All Tests Passed! ==="
 echo ""
@@ -195,3 +216,4 @@ echo "  ✓ Difficult word challenge for VirtualBox installation (7-letter words
 echo "  ✓ makepkg capped runner is integrated via wrapper and installer"
 echo "  ✓ mkpkg convenience helper is deployed by installer"
 echo "  ✓ installer fails fast and handles immutable policy files safely"
+echo "  ✓ pacman wrapper hot paths use bash builtin time helpers"
