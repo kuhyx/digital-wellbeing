@@ -367,6 +367,22 @@ function has_noconfirm_flag() {
 	return 1
 }
 
+current_epoch() {
+	printf '%(%s)T\n' -1
+}
+
+current_day_of_week() {
+	printf '%(%u)T\n' -1
+}
+
+current_hour_24() {
+	printf '%(%H)T\n' -1
+}
+
+current_day_name() {
+	printf '%(%A)T\n' -1
+}
+
 # Helper: get list of PIDs holding a lock file (excluding our own PID)
 # Populates the $holders array
 get_lock_holders() {
@@ -453,7 +469,7 @@ check_and_handle_db_lock() {
 	# Decide whether to remove the lock
 	local now epoch age
 	if epoch=$(stat -c %Y "$lock_file" 2>/dev/null); then
-		now=$(date +%s)
+		now=$(current_epoch)
 		age=$((now - epoch))
 	else
 		age=999999
@@ -554,9 +570,9 @@ function check_for_steam() {
 # Function to check if current day is a weekday (after 4PM Friday until midnight Sunday)
 function is_weekday() {
 	local day_of_week
-	day_of_week=$(date +%u) # %u gives 1-7 (Monday is 1, Sunday is 7)
+	day_of_week=$(current_day_of_week) # %u gives 1-7 (Monday is 1, Sunday is 7)
 	local hour
-	hour=$(date +%H) # %H gives hour in 24-hour format (00-23)
+	hour=$(current_hour_24) # %H gives hour in 24-hour format (00-23)
 
 	# Monday through Thursday are always weekdays
 	if [[ $day_of_week -ge 1 && $day_of_week -le 4 ]]; then
@@ -647,9 +663,9 @@ function run_word_challenge() {
 	# Timer display background process
 	(
 		local start_time current_time elapsed remaining
-		start_time=$(date +%s)
+		start_time=$(current_epoch)
 		while true; do
-			current_time=$(date +%s)
+			current_time=$(current_epoch)
 			elapsed=$((current_time - start_time))
 			remaining=$((timeout_seconds - elapsed))
 			if [[ $remaining -le 0 ]]; then
@@ -696,7 +712,7 @@ function prompt_for_steam_challenge() {
 	# Check if it's a weekday and block completely
 	if is_weekday; then
 		local day_name
-		day_name=$(date +%A)
+		day_name=$(current_day_name)
 		echo -e "${RED}Steam installation BLOCKED: Steam cannot be installed on weekdays.${NC}"
 		echo -e "${RED}Today is $day_name. Please try again on the weekend (Saturday or Sunday).${NC}"
 		return 1
@@ -773,7 +789,7 @@ display_operation "$1"
 echo -e "${GREEN}Executing:${NC} $PACMAN_BIN $*" >&2
 
 # Record start time for statistics
-start_time=$(date +%s)
+start_time=$(current_epoch)
 
 # Handle a possible stale DB lock before executing
 if ! check_and_handle_db_lock "$@"; then
@@ -796,7 +812,7 @@ if [[ $manual_hosts_guard -eq 1 ]]; then
 fi
 
 # Record end time for statistics
-end_time=$(date +%s)
+end_time=$(current_epoch)
 duration=$((end_time - start_time))
 
 # Display results

@@ -19,7 +19,7 @@ STATE_FILE="$STATE_DIR/work-time.state"
 LOCK_FILE="$STATE_DIR/tracker.lock"
 LOG_DIR="/var/log/thesis-work-tracker"
 LOG_FILE="$LOG_DIR/tracker.log"
-CHECK_INTERVAL=5 # Check every 5 seconds
+CHECK_INTERVAL=15 # Check every 15 seconds
 
 # Work requirements (in seconds)
 # 2 hours of work = 7200 seconds required before Steam access
@@ -89,7 +89,7 @@ log_message() {
 	shift
 	local message="$*"
 	local timestamp
-	timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+	printf -v timestamp '%(%Y-%m-%d %H:%M:%S)T' -1
 	echo "[${timestamp}] [${level}] ${message}" | tee -a "$LOG_FILE"
 }
 
@@ -117,13 +117,16 @@ init_state() {
 
 	# Initialize state file if it doesn't exist
 	if [[ ! -f $STATE_FILE ]]; then
+		local now_iso now_epoch
+		printf -v now_iso '%(%Y-%m-%d %H:%M:%S)T' -1
+		printf -v now_epoch '%(%s)T' -1
 		cat <<EOF | sudo tee "$STATE_FILE" >/dev/null
 # Thesis Work Tracker State File
 # DO NOT EDIT MANUALLY - Managed by thesis_work_tracker daemon
-# Last updated: $(date)
+# Last updated: ${now_iso}
 
 TOTAL_WORK_SECONDS=0
-LAST_UPDATE_TIMESTAMP=$(date +%s)
+LAST_UPDATE_TIMESTAMP=${now_epoch}
 STEAM_ACCESS_GRANTED=0
 LAST_WORK_SESSION_START=0
 CURRENT_SESSION_SECONDS=0
@@ -175,13 +178,16 @@ save_state() {
 	sudo chattr -i "$STATE_FILE" 2>/dev/null || true
 
 	# Write new state
+	local now_iso now_epoch
+	printf -v now_iso '%(%Y-%m-%d %H:%M:%S)T' -1
+	printf -v now_epoch '%(%s)T' -1
 	cat <<EOF | sudo tee "$STATE_FILE" >/dev/null
 # Thesis Work Tracker State File
 # DO NOT EDIT MANUALLY - Managed by thesis_work_tracker daemon
-# Last updated: $(date)
+# Last updated: ${now_iso}
 
 TOTAL_WORK_SECONDS=$total_work
-LAST_UPDATE_TIMESTAMP=$(date +%s)
+LAST_UPDATE_TIMESTAMP=${now_epoch}
 STEAM_ACCESS_GRANTED=$steam_access
 LAST_WORK_SESSION_START=$session_start
 CURRENT_SESSION_SECONDS=$current_session
@@ -215,7 +221,6 @@ get_active_window_info() {
 	fi
 
 	local window_name
-	window_name=$(xdotool getwindowname "$active_window_id" 2>/dev/null || echo "")
 
 	local window_pid
 	window_pid=$(xdotool getwindowpid "$active_window_id" 2>/dev/null || echo "")
@@ -223,6 +228,11 @@ get_active_window_info() {
 	local process_name=""
 	if [[ -n $window_pid ]]; then
 		process_name=$(ps -p "$window_pid" -o comm= 2>/dev/null || echo "")
+	fi
+
+	window_name=""
+	if [[ $process_name == "Code" || $process_name == "code" ]]; then
+		window_name=$(xdotool getwindowname "$active_window_id" 2>/dev/null || echo "")
 	fi
 
 	echo "${process_name}|${window_name}"
@@ -379,13 +389,13 @@ main_loop() {
 	fi
 
 	local last_status_log
-	last_status_log=$(date +%s)
+	printf -v last_status_log '%(%s)T' -1
 	local last_decay_check
-	last_decay_check=$(date +%s)
+	printf -v last_decay_check '%(%s)T' -1
 
 	while true; do
 		local current_time
-		current_time=$(date +%s)
+		printf -v current_time '%(%s)T' -1
 
 		# Check if thesis work is active
 		if is_thesis_work_active; then
@@ -462,16 +472,18 @@ cleanup() {
 	exit 0
 }
 
-trap cleanup SIGTERM SIGINT
+if [[ ${THESIS_WORK_TRACKER_SKIP_MAIN:-0} -ne 1 ]]; then
+	trap cleanup SIGTERM SIGINT
 
-# Check for lock file to prevent multiple instances
-if [[ -f $LOCK_FILE ]]; then
-	log_error "Another instance is already running (lock file exists: $LOCK_FILE)"
-	exit 1
+	# Check for lock file to prevent multiple instances
+	if [[ -f $LOCK_FILE ]]; then
+		log_error "Another instance is already running (lock file exists: $LOCK_FILE)"
+		exit 1
+	fi
+
+	# Create lock file
+	touch "$LOCK_FILE"
+
+	# Run main loop
+	main_loop
 fi
-
-# Create lock file
-touch "$LOCK_FILE"
-
-# Run main loop
-main_loop

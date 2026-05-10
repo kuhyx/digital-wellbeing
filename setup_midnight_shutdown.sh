@@ -13,8 +13,8 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 # Schedule constants (single source of truth for this script)
 # These values are written to /etc/shutdown-schedule.conf during setup
-SCHEDULE_MON_WED_HOUR=24
-SCHEDULE_THU_SUN_HOUR=24
+SCHEDULE_MON_WED_HOUR=22
+SCHEDULE_THU_SUN_HOUR=22
 SCHEDULE_MORNING_END_HOUR=0
 
 # ============================================================================
@@ -27,6 +27,54 @@ SCHEDULE_MORNING_END_HOUR=0
 # ============================================================================
 
 CANONICAL_CONFIG="/usr/local/share/locked-shutdown-schedule.conf"
+
+# Validate that the schedule allows at least MIN_USAGE_HOURS of continuous PC usage.
+# The usable window is from SCHEDULE_MORNING_END_HOUR until each shutdown hour.
+# Both shutdown hours must independently satisfy the minimum (10 hours).
+MIN_USAGE_HOURS=10
+
+validate_minimum_usage_window() {
+	local mon_wed_window thu_sun_window
+	mon_wed_window=$(( SCHEDULE_MON_WED_HOUR - SCHEDULE_MORNING_END_HOUR ))
+	thu_sun_window=$(( SCHEDULE_THU_SUN_HOUR - SCHEDULE_MORNING_END_HOUR ))
+
+	local errors=()
+
+	if [[ $mon_wed_window -le 0 ]]; then
+		errors+=("Mon-Wed: morning end (${SCHEDULE_MORNING_END_HOUR}:00) is at or after shutdown (${SCHEDULE_MON_WED_HOUR}:00) — 0 usable hours")
+	elif [[ $mon_wed_window -lt $MIN_USAGE_HOURS ]]; then
+		errors+=("Mon-Wed: only ${mon_wed_window}h of usable time (${SCHEDULE_MORNING_END_HOUR}:00–${SCHEDULE_MON_WED_HOUR}:00), need at least ${MIN_USAGE_HOURS}h")
+	fi
+
+	if [[ $thu_sun_window -le 0 ]]; then
+		errors+=("Thu-Sun: morning end (${SCHEDULE_MORNING_END_HOUR}:00) is at or after shutdown (${SCHEDULE_THU_SUN_HOUR}:00) — 0 usable hours")
+	elif [[ $thu_sun_window -lt $MIN_USAGE_HOURS ]]; then
+		errors+=("Thu-Sun: only ${thu_sun_window}h of usable time (${SCHEDULE_MORNING_END_HOUR}:00–${SCHEDULE_THU_SUN_HOUR}:00), need at least ${MIN_USAGE_HOURS}h")
+	fi
+
+	if [[ ${#errors[@]} -gt 0 ]]; then
+		echo ""
+		echo "╔══════════════════════════════════════════════════════════════════╗"
+		echo "║          ❌ INVALID SCHEDULE CONFIGURATION ❌                    ║"
+		echo "╚══════════════════════════════════════════════════════════════════╝"
+		echo ""
+		echo "The schedule constants do not guarantee at least ${MIN_USAGE_HOURS} hours of"
+		echo "continuous PC availability. This would cause the PC to shut down"
+		echo "immediately or very shortly after it becomes usable."
+		echo ""
+		for err in "${errors[@]}"; do
+			echo "  ✗ $err"
+		done
+		echo ""
+		echo "Fix: ensure (SHUTDOWN_HOUR - MORNING_END_HOUR) >= ${MIN_USAGE_HOURS} for both windows."
+		echo "     Example: MORNING_END_HOUR=6, SHUTDOWN_HOUR=22 → 16 usable hours ✓"
+		echo ""
+		exit 1
+	fi
+}
+
+# Validate schedule constants immediately (before any sudo escalation or file writes)
+validate_minimum_usage_window
 
 # Check if trying to make schedule more lenient (later shutdown / earlier morning end)
 check_schedule_protection() {
@@ -938,7 +986,9 @@ MONITOR_SERVICE="shutdown-timer-monitor.service"
 CHECK_INTERVAL=30
 
 log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE" >&2
+	local _ts
+	printf -v _ts '%(%Y-%m-%d %H:%M:%S)T' -1
+	printf '%s [shutdown-monitor] %s\n' "$_ts" "$1" | tee -a "$LOG_FILE" >&2
 }
 
 timer_needs_restoration() {
@@ -983,22 +1033,58 @@ restore_timer() {
     fi
 }
 
-log_message "=== Shutdown Timer Monitor Started ==="
-log_message "Monitoring timer: $TIMER_NAME"
+monitor_with_dbus() {
+	log_message "Starting shutdown timer monitoring with D-Bus events"
 
-if timer_needs_restoration; then
-    log_message "Initial check: Timer needs restoration"
-    restore_timer
-else
-    log_message "Initial check: Timer is properly configured"
-fi
+	if command -v busctl &>/dev/null; then
+		busctl monitor --system org.freedesktop.systemd1 2>/dev/null |
+			while read -r line; do
+				if [[ $line == *"$TIMER_NAME"* || $line == *"$SERVICE_NAME"* ]]; then
+					log_message "Systemd event detected for shutdown timer"
+					sleep 2
+					if timer_needs_restoration; then
+						restore_timer
+					fi
+				fi
+			done
+	else
+		log_message "busctl not available, falling back to polling"
+		monitor_with_polling
+	fi
+}
 
-while true; do
-    if timer_needs_restoration; then
-        restore_timer
-    fi
-    sleep "$CHECK_INTERVAL"
-done
+monitor_with_polling() {
+	log_message "Starting shutdown timer monitoring with polling (interval: ${CHECK_INTERVAL}s)"
+
+	while true; do
+		if timer_needs_restoration; then
+			restore_timer
+		fi
+		sleep "$CHECK_INTERVAL"
+	done
+}
+
+start_monitoring() {
+	log_message "=== Shutdown Timer Monitor Started ==="
+	log_message "Monitoring timer: $TIMER_NAME"
+	log_message "Monitoring service: $SERVICE_NAME"
+
+	if timer_needs_restoration; then
+		log_message "Initial check: Timer needs restoration"
+		restore_timer
+	else
+		log_message "Initial check: Timer is properly configured"
+	fi
+
+	if command -v busctl &>/dev/null; then
+		monitor_with_dbus
+	else
+		log_message "busctl not available, falling back to polling"
+		monitor_with_polling
+	fi
+}
+
+start_monitoring
 EOF
 
 	chmod +x "$monitor_script"

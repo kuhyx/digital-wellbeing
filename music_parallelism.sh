@@ -80,26 +80,33 @@ MUSIC_SERVICES=(
   "pandora.com"
 )
 
+build_regex_pattern() {
+  local -n items=$1
+  local pattern
+
+  printf -v pattern '%s|' "${items[@]}"
+  printf '%s\n' "${pattern%|}"
+}
+
+MUSIC_SERVICES_PATTERN=$(build_regex_pattern MUSIC_SERVICES)
+readonly MUSIC_SERVICES_PATTERN
+readonly MUSIC_WINDOWS_PATTERN='YouTube Music|music\.youtube\.com|music\.apple\.com|soundcloud\.com|pandora\.com|deezer\.com|tidal\.com'
+readonly ACTIVE_NO_MUSIC_INTERVAL=15
+readonly ACTIVE_AFTER_KILL_INTERVAL=5
+readonly IDLE_CHECK_INTERVAL=30
+
 # Check if any music service is running and return its details (OPTIMIZED: batch pgrep calls)
 find_music_services() {
   local found_services=()
 
-  # Single pgrep call with combined regex for all music services (NO FORK PER SERVICE)
-  local music_pattern
-  printf -v music_pattern '%s|' "${MUSIC_SERVICES[@]}"
-  music_pattern="${music_pattern%|}"  # strip trailing |
-
   # Check processes (single fork, no per-PID helpers)
-  if pgrep -i -f "$music_pattern" &> /dev/null; then
+  if pgrep -i -f "$MUSIC_SERVICES_PATTERN" &> /dev/null; then
     found_services+=("music process")
   fi
 
   # Check windows (use optimized is_focus_app_running logic: single xdotool regex call)
   if command -v xdotool &> /dev/null && [[ ${#MUSIC_SERVICES[@]} -gt 0 ]]; then
-    local xdotool_regex
-    printf -v xdotool_regex '%s|' "${MUSIC_SERVICES[@]}"
-    xdotool_regex="${xdotool_regex%|}"  # strip trailing |
-    if xdotool search --name "$xdotool_regex" &> /dev/null 2>&1; then
+    if xdotool search --name "$MUSIC_WINDOWS_PATTERN" &> /dev/null 2>&1; then
       found_services+=("music service (window)")
     fi
   fi
@@ -160,11 +167,12 @@ instant_monitor_loop() {
   local next_enforcement_ts=0
   local current_ts=0
   local focus_app=""
+  local sleep_interval="$IDLE_CHECK_INTERVAL"
 
   log_message "=== Music Parallelism INSTANT Monitor Started ==="
   log_message "Focus apps (windows): ${FOCUS_APPS_WINDOWS[*]}"
   log_message "Focus apps (processes): ${FOCUS_APPS_PROCESSES[*]}"
-  log_message "Polling: ${FAST_CHECK_INTERVAL}s active, ${IDLE_CHECK_INTERVAL}s idle, ${ENFORCEMENT_COOLDOWN}s enforcement cooldown"
+  log_message "Polling: ${FAST_CHECK_INTERVAL}s active, ${ACTIVE_NO_MUSIC_INTERVAL}s stable-focus, ${IDLE_CHECK_INTERVAL}s idle, ${ENFORCEMENT_COOLDOWN}s enforcement cooldown"
 
   while true; do
     if focus_app=$(is_focus_app_running 2> /dev/null); then
@@ -174,15 +182,21 @@ instant_monitor_loop() {
           if kill_music_services; then
             notify_user "$focus_app"
             log_message "INSTANT KILL: Music services terminated"
+            sleep_interval="$ACTIVE_AFTER_KILL_INTERVAL"
           fi
+        else
+          sleep_interval="$ACTIVE_NO_MUSIC_INTERVAL"
         fi
         next_enforcement_ts=$((current_ts + ENFORCEMENT_COOLDOWN))
+      else
+        sleep_interval="$ACTIVE_NO_MUSIC_INTERVAL"
       fi
-      sleep "$FAST_CHECK_INTERVAL"
     else
       next_enforcement_ts=0
-      sleep "$IDLE_CHECK_INTERVAL"
+      sleep_interval="$IDLE_CHECK_INTERVAL"
     fi
+
+    sleep "$sleep_interval"
   done
 }
 
