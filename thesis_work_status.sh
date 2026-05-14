@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-STATE_FILE="/var/lib/thesis-work-tracker/work-time.state"
+STATE_FILE="${STATE_FILE:-/var/lib/thesis-work-tracker/work-time.state}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -22,19 +22,29 @@ if [[ ! -f $STATE_FILE ]]; then
 fi
 
 # Load state (need sudo to read immutable file)
-if [[ $EUID -ne 0 ]]; then
+if [[ -z ${THESIS_STATUS_SKIP_SUDO:-} ]] && [[ $EUID -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
 fi
 
 # Temporarily remove immutable to read
 sudo chattr -i "$STATE_FILE" 2>/dev/null || true
 
-# Parse state file safely without using source
-# Only extract the numeric values we need
-TOTAL_WORK_SECONDS=$(grep "^TOTAL_WORK_SECONDS=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-STEAM_ACCESS_GRANTED=$(grep "^STEAM_ACCESS_GRANTED=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-CURRENT_SESSION_SECONDS=$(grep "^CURRENT_SESSION_SECONDS=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-LAST_WORK_SESSION_START=$(grep "^LAST_WORK_SESSION_START=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
+# Parse state file with a single while-read pass (no grep/cut forks)
+TOTAL_WORK_SECONDS=0
+STEAM_ACCESS_GRANTED=0
+CURRENT_SESSION_SECONDS=0
+LAST_WORK_SESSION_START=0
+
+local_key=''
+local_value=''
+while IFS='=' read -r local_key local_value; do
+    case $local_key in
+        TOTAL_WORK_SECONDS)      TOTAL_WORK_SECONDS=$local_value ;;
+        STEAM_ACCESS_GRANTED)    STEAM_ACCESS_GRANTED=$local_value ;;
+        CURRENT_SESSION_SECONDS) CURRENT_SESSION_SECONDS=$local_value ;;
+        LAST_WORK_SESSION_START) LAST_WORK_SESSION_START=$local_value ;;
+    esac
+done < "$STATE_FILE" 2>/dev/null || true
 
 # Validate that values are numeric
 if ! [[ $TOTAL_WORK_SECONDS =~ ^[0-9]+$ ]]; then TOTAL_WORK_SECONDS=0; fi
@@ -44,6 +54,11 @@ if ! [[ $LAST_WORK_SESSION_START =~ ^[0-9]+$ ]]; then LAST_WORK_SESSION_START=0;
 
 # Re-apply immutable
 sudo chattr +i "$STATE_FILE" 2>/dev/null || true
+
+# Test mode: skip display and return to caller
+if [[ -n ${THESIS_STATUS_SKIP_OUTPUT:-} ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 
 # Default values if not set
 TOTAL_WORK_SECONDS=${TOTAL_WORK_SECONDS:-0}

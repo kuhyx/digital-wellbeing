@@ -20,6 +20,8 @@ LOCK_FILE="$STATE_DIR/tracker.lock"
 LOG_DIR="/var/log/thesis-work-tracker"
 LOG_FILE="$LOG_DIR/tracker.log"
 CHECK_INTERVAL=15 # Check every 15 seconds
+PROC_ROOT="${PROC_ROOT:-/proc}"
+HOSTS_FILE="${HOSTS_FILE:-/etc/hosts}"
 
 # Work requirements (in seconds)
 # 2 hours of work = 7200 seconds required before Steam access
@@ -90,7 +92,10 @@ log_message() {
 	local message="$*"
 	local timestamp
 	printf -v timestamp '%(%Y-%m-%d %H:%M:%S)T' -1
-	echo "[${timestamp}] [${level}] ${message}" | tee -a "$LOG_FILE"
+	local formatted
+	formatted="[${timestamp}] [${level}] ${message}"
+	printf '%s\n' "$formatted" >&2
+	printf '%s\n' "$formatted" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 log_info() { log_message "INFO" "$@"; }
@@ -99,6 +104,21 @@ log_error() { log_message "ERROR" "$@"; }
 log_debug() {
 	if [[ ${DEBUG:-0} -eq 1 ]]; then
 		log_message "DEBUG" "$@"
+	fi
+}
+
+wait_seconds() {
+	local timeout_s=$1
+	local start_ts end_ts elapsed_s remaining_s
+
+	printf -v start_ts '%(%s)T' -1
+	IFS= read -r -t "$timeout_s" || true
+	printf -v end_ts '%(%s)T' -1
+
+	elapsed_s=$((end_ts - start_ts))
+	if (( elapsed_s < timeout_s )); then
+		remaining_s=$((timeout_s - elapsed_s))
+		sleep "$remaining_s"
 	fi
 }
 
@@ -120,7 +140,7 @@ init_state() {
 		local now_iso now_epoch
 		printf -v now_iso '%(%Y-%m-%d %H:%M:%S)T' -1
 		printf -v now_epoch '%(%s)T' -1
-		cat <<EOF | sudo tee "$STATE_FILE" >/dev/null
+		sudo bash -c "cat > '$STATE_FILE'" <<EOF
 # Thesis Work Tracker State File
 # DO NOT EDIT MANUALLY - Managed by thesis_work_tracker daemon
 # Last updated: ${now_iso}
@@ -148,14 +168,29 @@ load_state() {
 	# Temporarily remove immutable flag to read
 	sudo chattr -i "$STATE_FILE" 2>/dev/null || true
 
-	# Parse state file safely without using source
-	# Only extract the numeric values we need
-	TOTAL_WORK_SECONDS=$(grep "^TOTAL_WORK_SECONDS=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-	STEAM_ACCESS_GRANTED=$(grep "^STEAM_ACCESS_GRANTED=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-	CURRENT_SESSION_SECONDS=$(grep "^CURRENT_SESSION_SECONDS=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-	LAST_WORK_SESSION_START=$(grep "^LAST_WORK_SESSION_START=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
-	# shellcheck disable=SC2034  # Written back to state file in save_state
-	LAST_UPDATE_TIMESTAMP=$(grep "^LAST_UPDATE_TIMESTAMP=" "$STATE_FILE" 2>/dev/null | cut -d= -f2 || echo "0")
+	# Parse state file safely without using source or external text helpers.
+	TOTAL_WORK_SECONDS=0
+	STEAM_ACCESS_GRANTED=0
+	CURRENT_SESSION_SECONDS=0
+	LAST_WORK_SESSION_START=0
+
+	local key value
+	while IFS='=' read -r key value; do
+		case $key in
+		TOTAL_WORK_SECONDS)
+			TOTAL_WORK_SECONDS=$value
+			;;
+		STEAM_ACCESS_GRANTED)
+			STEAM_ACCESS_GRANTED=$value
+			;;
+		CURRENT_SESSION_SECONDS)
+			CURRENT_SESSION_SECONDS=$value
+			;;
+		LAST_WORK_SESSION_START)
+			LAST_WORK_SESSION_START=$value
+			;;
+		esac
+	done < "$STATE_FILE"
 
 	# Validate that values are numeric
 	if ! [[ $TOTAL_WORK_SECONDS =~ ^[0-9]+$ ]]; then TOTAL_WORK_SECONDS=0; fi
@@ -177,11 +212,31 @@ save_state() {
 	# Remove immutable flag
 	sudo chattr -i "$STATE_FILE" 2>/dev/null || true
 
-	# Write new state
 	local now_iso now_epoch
 	printf -v now_iso '%(%Y-%m-%d %H:%M:%S)T' -1
 	printf -v now_epoch '%(%s)T' -1
-	cat <<EOF | sudo tee "$STATE_FILE" >/dev/null
+
+	if [[ -w $STATE_FILE ]]; then
+		cat <<EOF > "$STATE_FILE"
+# Thesis Work Tracker State File
+# DO NOT EDIT MANUALLY - Managed by thesis_work_tracker daemon
+# Last updated: ${now_iso}
+
+TOTAL_WORK_SECONDS=$total_work
+LAST_UPDATE_TIMESTAMP=${now_epoch}
+STEAM_ACCESS_GRANTED=$steam_access
+LAST_WORK_SESSION_START=$session_start
+CURRENT_SESSION_SECONDS=$current_session
+EOF
+	else
+		# Non-writable path: write in temp and copy with sudo.
+		local temp_state
+		temp_state=$(mktemp) || {
+			log_error "Failed to create temporary state file"
+			return 1
+		}
+
+		cat <<EOF > "$temp_state"
 # Thesis Work Tracker State File
 # DO NOT EDIT MANUALLY - Managed by thesis_work_tracker daemon
 # Last updated: ${now_iso}
@@ -193,17 +248,15 @@ LAST_WORK_SESSION_START=$session_start
 CURRENT_SESSION_SECONDS=$current_session
 EOF
 
+		sudo cp "$temp_state" "$STATE_FILE"
+		rm -f "$temp_state"
+	fi
+
 	sudo chmod 600 "$STATE_FILE"
 	# Re-apply immutable flag
 	if ! sudo chattr +i "$STATE_FILE" 2>/dev/null; then
 		log_warn "Failed to set immutable flag on state file after save"
 	fi
-}
-
-# Check if a process is running
-is_process_running() {
-	local process_name="$1"
-	pgrep -x "$process_name" >/dev/null 2>&1
 }
 
 # Get active window title and process name
@@ -227,7 +280,11 @@ get_active_window_info() {
 
 	local process_name=""
 	if [[ -n $window_pid ]]; then
-		process_name=$(ps -p "$window_pid" -o comm= 2>/dev/null || echo "")
+		if [[ -r "$PROC_ROOT/$window_pid/comm" ]]; then
+			read -r process_name < "$PROC_ROOT/$window_pid/comm" || process_name=""
+		else
+			process_name=$(ps -p "$window_pid" -o comm= 2>/dev/null || echo "")
+		fi
 	fi
 
 	window_name=""
@@ -314,24 +371,33 @@ block_distractions() {
 	log_info "Blocking Steam and distractions in /etc/hosts"
 
 	# Remove immutable flag temporarily
-	sudo chattr -i /etc/hosts 2>/dev/null || true
+	sudo chattr -i "$HOSTS_FILE" 2>/dev/null || true
 
-	# Add blocking entries if not already present
-	local hosts_modified=0
+	# Scan the file once to build a set of already-blocked domains (no grep fork)
+	local -A blocked_set=()
+	local scan_line scan_domain
+	while IFS= read -r scan_line; do
+		if [[ $scan_line == "0.0.0.0 "* || $scan_line == $'0.0.0.0\t'* ]]; then
+			read -r _ scan_domain <<<"$scan_line" 2>/dev/null || true
+			blocked_set[$scan_domain]=1
+		fi
+	done < "$HOSTS_FILE"
 
+	# Collect entries not yet present
+	local new_entries=() domain
 	for domain in "${STEAM_DOMAINS[@]}" "${DISTRACTION_DOMAINS[@]}"; do
-		if ! grep -q "^0.0.0.0[[:space:]]*$domain" /etc/hosts 2>/dev/null; then
-			echo "0.0.0.0 $domain" | sudo tee -a /etc/hosts >/dev/null
-			hosts_modified=1
+		if [[ -z ${blocked_set[$domain]+x} ]]; then
+			new_entries+=("0.0.0.0 $domain")
 		fi
 	done
 
-	# Re-apply immutable flag
-	sudo chattr +i /etc/hosts 2>/dev/null || true
-
-	if [[ $hosts_modified -eq 1 ]]; then
+	if (( ${#new_entries[@]} > 0 )); then
+		printf '%s\n' "${new_entries[@]}" | sudo bash -c "cat >> '$HOSTS_FILE'"
 		log_info "Added distraction blocks to /etc/hosts"
 	fi
+
+	# Re-apply immutable flag
+	sudo chattr +i "$HOSTS_FILE" 2>/dev/null || true
 }
 
 # Unblock Steam and distractions from /etc/hosts
@@ -339,33 +405,43 @@ unblock_distractions() {
 	log_info "Unblocking Steam and distractions in /etc/hosts"
 
 	# Remove immutable flag temporarily
-	sudo chattr -i /etc/hosts 2>/dev/null || true
+	sudo chattr -i "$HOSTS_FILE" 2>/dev/null || true
 
-	# Remove blocking entries using mktemp for security
-	local temp_hosts
-	temp_hosts=$(mktemp) || {
-		log_error "Failed to create temporary file"
-		return 1
-	}
+	# Filter out blocked entries using bash (no sed/mktemp forks)
+	local new_content="" hosts_line skip domain
+	while IFS= read -r hosts_line; do
+		skip=0
+		for domain in "${STEAM_DOMAINS[@]}" "${DISTRACTION_DOMAINS[@]}"; do
+			if [[ $hosts_line == "0.0.0.0 $domain" || $hosts_line == "0.0.0.0	$domain" ]]; then
+				skip=1
+				break
+			fi
+		done
+		if [[ $skip -eq 0 ]]; then
+			new_content+="${hosts_line}"$'\n'
+		fi
+	done < "$HOSTS_FILE"
 
-	sudo cp /etc/hosts "$temp_hosts"
-
-	for domain in "${STEAM_DOMAINS[@]}" "${DISTRACTION_DOMAINS[@]}"; do
-		sudo sed -i "/^0.0.0.0[[:space:]]*$domain/d" "$temp_hosts"
-	done
-
-	sudo mv "$temp_hosts" /etc/hosts
-	sudo chmod 644 /etc/hosts
+	printf '%s' "$new_content" | sudo bash -c "cat > '$HOSTS_FILE'"
+	sudo chmod 644 "$HOSTS_FILE"
 
 	# Re-apply immutable flag
-	sudo chattr +i /etc/hosts 2>/dev/null || true
+	sudo chattr +i "$HOSTS_FILE" 2>/dev/null || true
 
 	log_info "Removed distraction blocks from /etc/hosts"
 }
 
 # Check if Steam is currently running (to track decay)
 is_steam_running() {
-	pgrep -x "steam" >/dev/null 2>&1
+	local comm_file proc_name
+	for comm_file in "$PROC_ROOT"/[0-9]*/comm; do
+		[[ -r $comm_file ]] || continue
+		read -r proc_name < "$comm_file" || continue
+		if [[ $proc_name == "steam" ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 # Main tracking loop
@@ -461,7 +537,7 @@ main_loop() {
 			last_status_log=$current_time
 		fi
 
-		sleep "$CHECK_INTERVAL"
+		wait_seconds "$CHECK_INTERVAL"
 	done
 }
 

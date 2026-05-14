@@ -13,8 +13,8 @@ source "$SCRIPT_DIR/../lib/common.sh"
 
 # Schedule constants (single source of truth for this script)
 # These values are written to /etc/shutdown-schedule.conf during setup
-SCHEDULE_MON_WED_HOUR=22
-SCHEDULE_THU_SUN_HOUR=22
+SCHEDULE_MON_WED_HOUR=24
+SCHEDULE_THU_SUN_HOUR=24
 SCHEDULE_MORNING_END_HOUR=0
 
 # ============================================================================
@@ -985,10 +985,37 @@ SERVICE_NAME="day-specific-shutdown.service"
 MONITOR_SERVICE="shutdown-timer-monitor.service"
 CHECK_INTERVAL=30
 
+wait_seconds() {
+	local timeout_s=$1
+	local start_ts end_ts elapsed_s remaining_s
+
+	printf -v start_ts '%(%s)T' -1
+	IFS= read -r -t "$timeout_s" || true
+	printf -v end_ts '%(%s)T' -1
+
+	elapsed_s=$((end_ts - start_ts))
+	if (( elapsed_s < timeout_s )); then
+		remaining_s=$((timeout_s - elapsed_s))
+		sleep "$remaining_s"
+	fi
+}
+
+current_epoch() {
+	local out_var="${1:-}"
+	if [[ -n $out_var ]]; then
+		printf -v "$out_var" '%(%s)T' -1
+	else
+		printf '%(%s)T\n' -1
+	fi
+}
+
 log_message() {
 	local _ts
+	local msg
 	printf -v _ts '%(%Y-%m-%d %H:%M:%S)T' -1
-	printf '%s [shutdown-monitor] %s\n' "$_ts" "$1" | tee -a "$LOG_FILE" >&2
+	printf -v msg '%s [shutdown-monitor] %s' "$_ts" "$1"
+	printf '%s\n' "$msg" >&2
+	printf '%s\n' "$msg" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 timer_needs_restoration() {
@@ -1035,13 +1062,19 @@ restore_timer() {
 
 monitor_with_dbus() {
 	log_message "Starting shutdown timer monitoring with D-Bus events"
+	local last_check_ts=0
 
 	if command -v busctl &>/dev/null; then
 		busctl monitor --system org.freedesktop.systemd1 2>/dev/null |
 			while read -r line; do
 				if [[ $line == *"$TIMER_NAME"* || $line == *"$SERVICE_NAME"* ]]; then
+					local now_ts
+					current_epoch now_ts
+					if (( now_ts - last_check_ts < CHECK_INTERVAL )); then
+						continue
+					fi
+					last_check_ts=$now_ts
 					log_message "Systemd event detected for shutdown timer"
-					sleep 2
 					if timer_needs_restoration; then
 						restore_timer
 					fi
@@ -1060,7 +1093,7 @@ monitor_with_polling() {
 		if timer_needs_restoration; then
 			restore_timer
 		fi
-		sleep "$CHECK_INTERVAL"
+		wait_seconds "$CHECK_INTERVAL"
 	done
 }
 
@@ -1143,7 +1176,7 @@ After=multi-user.target
 
 [Timer]
 OnBootSec=60
-OnUnitActiveSec=60
+OnUnitActiveSec=300
 Persistent=true
 
 [Install]

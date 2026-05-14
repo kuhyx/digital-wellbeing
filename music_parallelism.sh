@@ -30,6 +30,15 @@ CHECK_INTERVAL=15
 FAST_CHECK_INTERVAL=5
 IDLE_CHECK_INTERVAL=30
 ENFORCEMENT_COOLDOWN=20
+PROC_ROOT="${PROC_ROOT:-/proc}"
+
+MUSIC_PROCESS_NAMES=(
+  "youtube-music"
+  "spotify"
+  "tidal"
+  "deezer"
+  "amazon music"
+)
 
 # Override focus apps with extended list for this script
 FOCUS_APPS_WINDOWS=(
@@ -80,33 +89,70 @@ MUSIC_SERVICES=(
   "pandora.com"
 )
 
-build_regex_pattern() {
-  local -n items=$1
-  local pattern
-
-  printf -v pattern '%s|' "${items[@]}"
-  printf '%s\n' "${pattern%|}"
-}
-
-MUSIC_SERVICES_PATTERN=$(build_regex_pattern MUSIC_SERVICES)
-readonly MUSIC_SERVICES_PATTERN
 readonly MUSIC_WINDOWS_PATTERN='YouTube Music|music\.youtube\.com|music\.apple\.com|soundcloud\.com|pandora\.com|deezer\.com|tidal\.com'
 readonly ACTIVE_NO_MUSIC_INTERVAL=15
 readonly ACTIVE_AFTER_KILL_INTERVAL=5
 readonly IDLE_CHECK_INTERVAL=30
+MUSIC_FOUND_PROCESS=0
+MUSIC_FOUND_WINDOW=0
+
+wait_seconds() {
+  local timeout_s=$1
+  local start_ts end_ts elapsed_s remaining_s
+
+  if [[ -n ${MUSIC_PARALLELISM_TEST_WAIT_LOG:-} ]]; then
+    printf '%s\n' "$timeout_s" >> "$MUSIC_PARALLELISM_TEST_WAIT_LOG"
+    if [[ ${MUSIC_PARALLELISM_TEST_EXIT_AFTER_WAIT:-0} -eq 1 ]]; then
+      exit 99
+    fi
+    return 0
+  fi
+
+  printf -v start_ts '%(%s)T' -1
+  IFS= read -r -t "$timeout_s" || true
+  printf -v end_ts '%(%s)T' -1
+
+  elapsed_s=$((end_ts - start_ts))
+  if (( elapsed_s < timeout_s )); then
+    remaining_s=$((timeout_s - elapsed_s))
+    sleep "$remaining_s"
+  fi
+}
+
+contains_music_process() {
+  local comm_file comm_lower token_lower
+
+  for comm_file in "$PROC_ROOT"/[0-9]*/comm; do
+    [[ -r $comm_file ]] || continue
+    read -r comm_lower < "$comm_file" || continue
+    comm_lower=${comm_lower,,}
+
+    for token_lower in "${MUSIC_PROCESS_NAMES[@]}"; do
+      if [[ $comm_lower == *"${token_lower,,}"* ]]; then
+        return 0
+      fi
+    done
+  done
+
+  return 1
+}
 
 # Check if any music service is running and return its details (OPTIMIZED: batch pgrep calls)
 find_music_services() {
   local found_services=()
+  MUSIC_FOUND_PROCESS=0
+  MUSIC_FOUND_WINDOW=0
 
-  # Check processes (single fork, no per-PID helpers)
-  if pgrep -i -f "$MUSIC_SERVICES_PATTERN" &> /dev/null; then
+  # Check processes using /proc (fork-free)
+  if contains_music_process; then
+    MUSIC_FOUND_PROCESS=1
     found_services+=("music process")
   fi
 
   # Check windows (use optimized is_focus_app_running logic: single xdotool regex call)
   if command -v xdotool &> /dev/null && [[ ${#MUSIC_SERVICES[@]} -gt 0 ]]; then
     if xdotool search --name "$MUSIC_WINDOWS_PATTERN" &> /dev/null 2>&1; then
+      MUSIC_FOUND_WINDOW=1
       found_services+=("music service (window)")
     fi
   fi
@@ -120,12 +166,19 @@ find_music_services() {
 
 # Kill music services
 kill_music_services() {
+  local use_cached_detection="${1:-0}"
   local killed=false
-  local process_pattern='youtube-music|spotify|tidal|deezer|Amazon Music|amazon music'
   local window_pattern='YouTube Music|music\.youtube\.com|music\.apple\.com|soundcloud\.com|pandora\.com|deezer\.com|tidal\.com'
+  local should_check_windows=1
+  local should_check_processes=1
+
+  if [[ $use_cached_detection -eq 1 ]]; then
+    should_check_windows=$MUSIC_FOUND_WINDOW
+    should_check_processes=$MUSIC_FOUND_PROCESS
+  fi
 
   # Close browser tabs for web-based music services via one xdotool search
-  if command -v xdotool &> /dev/null; then
+  if [[ $should_check_windows -eq 1 ]] && command -v xdotool &> /dev/null; then
     local windows wid
     windows=$(xdotool search --name "$window_pattern" 2> /dev/null || true)
     for wid in $windows; do
@@ -135,10 +188,28 @@ kill_music_services() {
     done
   fi
 
-  # Kill app processes with one regex-based pkill
-  if pgrep -i -f "$process_pattern" &> /dev/null; then
-    pkill -9 -i -f "$process_pattern" 2> /dev/null || true
-    killed=true
+  # Kill app processes with /proc scan + builtin kill (fork-free in hot path)
+  if [[ $should_check_processes -eq 1 ]]; then
+    local comm_file pid comm_lower token_lower
+    for comm_file in "$PROC_ROOT"/[0-9]*/comm; do
+      [[ -r $comm_file ]] || continue
+      read -r comm_lower < "$comm_file" || continue
+      comm_lower=${comm_lower,,}
+      pid=${comm_file#"$PROC_ROOT"/}
+      pid=${pid%%/*}
+
+      for token_lower in "${MUSIC_PROCESS_NAMES[@]}"; do
+        if [[ $comm_lower == *"${token_lower,,}"* ]]; then
+          if [[ $PROC_ROOT != "/proc" ]]; then
+            # Test mode (fake proc tree): mark as killed without signaling host PIDs.
+            killed=true
+          elif kill -9 "$pid" 2> /dev/null; then
+            killed=true
+          fi
+          break
+        fi
+      done
+    done
   fi
 
   if $killed; then
@@ -179,7 +250,7 @@ instant_monitor_loop() {
       current_ts=$(get_timestamp)
       if (( current_ts >= next_enforcement_ts )); then
         if find_music_services > /dev/null 2>&1; then
-          if kill_music_services; then
+          if kill_music_services 1; then
             notify_user "$focus_app"
             log_message "INSTANT KILL: Music services terminated"
             sleep_interval="$ACTIVE_AFTER_KILL_INTERVAL"
@@ -196,7 +267,7 @@ instant_monitor_loop() {
       sleep_interval="$IDLE_CHECK_INTERVAL"
     fi
 
-    sleep "$sleep_interval"
+    wait_seconds "$sleep_interval"
   done
 }
 
@@ -219,13 +290,13 @@ monitor_loop() {
         log_message "Active music services: $music_services"
 
         # Kill the music services
-        if kill_music_services; then
+        if kill_music_services 1; then
           notify_user "$focus_app"
         fi
       fi
     fi
 
-    sleep "$CHECK_INTERVAL"
+    wait_seconds "$CHECK_INTERVAL"
   done
 }
 
@@ -249,15 +320,10 @@ show_status() {
     fi
   fi
 
-  # Check processes (OPTIMIZED: single pgrep call with combined regex)
-  if [[ ${#FOCUS_APPS_PROCESSES[@]} -gt 0 ]]; then
-    local proc_pattern
-    printf -v proc_pattern '%s|' "${FOCUS_APPS_PROCESSES[@]}"
-    proc_pattern="${proc_pattern%|}"  # strip trailing |
-    if pgrep -f "$proc_pattern" &> /dev/null; then
-      echo "  ✓ Focus process running"
-      focus_running=true
-    fi
+  # Check processes using shared /proc-based helper (fork-free)
+  if is_focus_app_running > /dev/null 2>&1; then
+    echo "  ✓ Focus process running"
+    focus_running=true
   fi
 
   if ! $focus_running; then
