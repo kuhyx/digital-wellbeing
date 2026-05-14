@@ -216,8 +216,8 @@ ensure_periodic_maintenance() {
 	self_dir="$(dirname "$(readlink -f "$0")")"
 	if [[ -f "$self_dir/setup_periodic_system.sh" ]]; then
 		setup_script="$self_dir/setup_periodic_system.sh"
-	elif [[ -f "$HOME/linux-configuration/scripts/setup_periodic_system.sh" ]]; then
-		setup_script="$HOME/linux-configuration/scripts/setup_periodic_system.sh"
+	elif [[ -f "$HOME/linux-configuration/scripts/periodic_background/setup_periodic_system.sh" ]]; then
+		setup_script="$HOME/linux-configuration/scripts/periodic_background/setup_periodic_system.sh"
 	fi
 
 	if [[ -n $setup_script ]]; then

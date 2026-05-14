@@ -63,23 +63,23 @@ When you haven't met your work quota, the following are blocked via `/etc/hosts`
 cd /path/to/scripts
 
 # Run the installer (will prompt for sudo)
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh
 ```
 
 ### Custom Configuration
 
 ```bash
 # Set custom work quota (e.g., 3 hours)
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh --work-quota 180
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh --work-quota 180
 
 # Set custom decay rate (e.g., 20 minutes per hour)
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh --decay-rate 20
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh --decay-rate 20
 
 # Set custom VS Code repository name
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh --vscode-repo "my-thesis-repo"
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh --vscode-repo "my-thesis-repo"
 
 # Combine multiple options
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh \
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh \
     --work-quota 150 \
     --decay-rate 25 \
     --vscode-repo "bachelor-thesis"
@@ -154,7 +154,7 @@ sudo systemctl enable thesis-work-tracker@$USER.service
 ## Uninstallation
 
 ```bash
-sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh --uninstall
+sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh --uninstall
 ```
 
 **Note**: This preserves your state file and logs. To completely remove everything:

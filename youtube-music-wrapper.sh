@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Source common library for shared functions
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-source "$SCRIPT_DIR/../lib/common.sh"
+source "$SCRIPT_DIR/../../lib/common.sh"
 
 REAL_BINARY="/opt/YouTube Music/youtube-music.real"
 LOG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/music-parallelism/music-parallelism.log"

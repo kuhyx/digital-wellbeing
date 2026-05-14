@@ -17,7 +17,7 @@ NC='\033[0m'
 # Check if state file exists
 if [[ ! -f $STATE_FILE ]]; then
     echo -e "${RED}Error:${NC} Thesis work tracker is not installed or has not been initialized."
-    echo "Install with: sudo scripts/digital_wellbeing/setup_thesis_work_tracker.sh"
+    echo "Install with: sudo scripts/periodic_background/digital_wellbeing/setup_thesis_work_tracker.sh"
     exit 1
 fi
 

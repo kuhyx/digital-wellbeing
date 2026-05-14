@@ -7,8 +7,8 @@ set -e # Exit on any error
 
 # Source common library for shared functions
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-# shellcheck source=../lib/common.sh
-source "$SCRIPT_DIR/../lib/common.sh"
+# shellcheck source=../../lib/common.sh
+source "$SCRIPT_DIR/../../lib/common.sh"
 
 # Parse interactive/help arguments
 parse_interactive_args "$@"
