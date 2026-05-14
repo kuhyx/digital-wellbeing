@@ -4,8 +4,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WRAPPER_DIR="$SCRIPT_DIR/../scripts/digital_wellbeing/pacman"
-VBOX_DIR="$SCRIPT_DIR/../scripts/digital_wellbeing/virtualbox"
+WRAPPER_DIR="$SCRIPT_DIR/../scripts/periodic_background/digital_wellbeing/pacman"
+VBOX_DIR="$SCRIPT_DIR/../scripts/periodic_background/digital_wellbeing/virtualbox"
 
 echo "=== Testing Pacman Wrapper Security Enhancements ==="
 echo ""

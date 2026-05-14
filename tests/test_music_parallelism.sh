@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-TARGET_SCRIPT="$REPO_DIR/scripts/digital_wellbeing/music_parallelism.sh"
+TARGET_SCRIPT="$REPO_DIR/scripts/periodic_background/digital_wellbeing/music_parallelism.sh"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -29,8 +29,8 @@ trap cleanup EXIT
 
 WORKTREE="$TMP_DIR/worktree"
 BIN_DIR="$TMP_DIR/bin"
-mkdir -p "$WORKTREE/scripts/digital_wellbeing" "$WORKTREE/scripts/lib" "$BIN_DIR"
-cp "$TARGET_SCRIPT" "$WORKTREE/scripts/digital_wellbeing/music_parallelism.sh"
+mkdir -p "$WORKTREE/scripts/periodic_background/digital_wellbeing" "$WORKTREE/scripts/lib" "$BIN_DIR"
+cp "$TARGET_SCRIPT" "$WORKTREE/scripts/periodic_background/digital_wellbeing/music_parallelism.sh"
 
 cat >"$WORKTREE/scripts/lib/common.sh" <<'EOF'
 #!/bin/bash
@@ -87,7 +87,7 @@ run_case() {
     XDOTOOL_LOG="${XDOTOOL_LOG:-}" \
     PROC_ROOT="$proc_root" \
     MOCK_FOCUS_ACTIVE="$focus_active" \
-    bash "$WORKTREE/scripts/digital_wellbeing/music_parallelism.sh" "$mode" \
+    bash "$WORKTREE/scripts/periodic_background/digital_wellbeing/music_parallelism.sh" "$mode" \
     >/dev/null 2>&1 || true
 
   assert_equals "$expected_wait" "$(<"$wait_log")" "music_parallelism.sh should pick the expected wait interval"
