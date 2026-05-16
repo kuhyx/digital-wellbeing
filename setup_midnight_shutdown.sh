@@ -13,9 +13,9 @@ source "$SCRIPT_DIR/../../lib/common.sh"
 
 # Schedule constants (single source of truth for this script)
 # These values are written to /etc/shutdown-schedule.conf during setup
-SCHEDULE_MON_WED_HOUR=24
-SCHEDULE_THU_SUN_HOUR=24
-SCHEDULE_MORNING_END_HOUR=0
+SCHEDULE_MON_WED_HOUR=21
+SCHEDULE_THU_SUN_HOUR=22
+SCHEDULE_MORNING_END_HOUR=5
 
 # ============================================================================
 # SCHEDULE PROTECTION MECHANISM
@@ -105,19 +105,19 @@ check_schedule_protection() {
 	local violations=()
 
 	# Check if Mon-Wed hour is being made LATER (more lenient)
-	#if [[ $SCHEDULE_MON_WED_HOUR -gt $canonical_mon_wed ]]; then
-	#	violations+=("Mon-Wed shutdown: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (later)")
-	#fi
-#
-	## Check if Thu-Sun hour is being made LATER (more lenient)
-	#if [[ $SCHEDULE_THU_SUN_HOUR -gt $canonical_thu_sun ]]; then
-	#	violations+=("Thu-Sun shutdown: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (later)")
-	#fi
-#
-	## Check if morning end is being made EARLIER (more lenient - shorter shutdown window)
-	#if [[ $SCHEDULE_MORNING_END_HOUR -lt $canonical_morning_end ]]; then
-	#	violations+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (earlier)")
-	#fi
+	if [[ $SCHEDULE_MON_WED_HOUR -gt $canonical_mon_wed ]]; then
+		violations+=("Mon-Wed shutdown: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (later)")
+	fi
+
+	# Check if Thu-Sun hour is being made LATER (more lenient)
+	if [[ $SCHEDULE_THU_SUN_HOUR -gt $canonical_thu_sun ]]; then
+		violations+=("Thu-Sun shutdown: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (later)")
+	fi
+
+	# Check if morning end is being made EARLIER (more lenient - shorter shutdown window)
+	if [[ $SCHEDULE_MORNING_END_HOUR -lt $canonical_morning_end ]]; then
+		violations+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (earlier)")
+	fi
 
 	if [[ ${#violations[@]} -gt 0 ]]; then
 		echo ""
@@ -1426,6 +1426,13 @@ enable_midnight_shutdown() {
 
 	# Test setup
 	test_setup
+
+	# Lock this setup script so values + checks can't be silently edited
+	local this_script
+	this_script="$(readlink -f "$0")"
+	chattr +i "$this_script" 2>/dev/null \
+		|| echo "⚠ Warning: Could not set immutable attribute on setup script"
+	echo "✓ Setup script locked (chattr +i) — run 'sudo chattr -i $this_script' to unlock for future changes"
 
 	# Show instructions
 	show_instructions
