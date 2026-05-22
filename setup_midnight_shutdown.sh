@@ -929,7 +929,24 @@ fi
 if [[ $should_shutdown == true ]]; then
     printf '%(%Y-%m-%d %H:%M:%S)T: Executing shutdown - current time %s:%s is within shutdown window for %s\n' -1 "$current_hour" "$current_minute" "$day_name"
     logger -t day-specific-shutdown "Executing scheduled shutdown at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1)"
-    /usr/bin/systemctl poweroff
+
+    # If tomorrow is a wake-alarm day (Mon=1, Fri=5, Sat=6, Sun=7), hibernate
+    # with an RTC timer so the alarm fires 8 hours later. Hibernate is completely
+    # silent and dark — ideal when the PC is in a bedroom. rtcwake -m disk saves
+    # state to swap and powers off, then the RTC restores power at wake_epoch.
+    tomorrow_dow=\$(date -d "tomorrow" +%u)
+    case "\$tomorrow_dow" in
+        1|5|6|7)
+            wake_epoch=\$(( \$(printf '%(%s)T' -1) + 8 * 3600 ))
+            logger -t day-specific-shutdown "Tomorrow is alarm day (dow=\$tomorrow_dow) — hibernating, RTC wake at epoch \$wake_epoch"
+            /usr/bin/sudo /usr/sbin/rtcwake -m no -t "\$wake_epoch"
+            /usr/bin/systemctl hibernate
+            ;;
+        *)
+            logger -t day-specific-shutdown "Tomorrow is not an alarm day — powering off normally"
+            /usr/bin/systemctl poweroff
+            ;;
+    esac
 else
     printf '%(%Y-%m-%d %H:%M:%S)T: Skipping shutdown - not within shutdown window for %s (current: %s:%s)\n' -1 "$day_name" "$current_hour" "$current_minute"
     logger -t day-specific-shutdown "Skipped shutdown - not within shutdown window for $day_name (current: $current_hour:$current_minute)"
