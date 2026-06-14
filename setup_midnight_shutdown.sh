@@ -934,17 +934,23 @@ if [[ $should_shutdown == true ]]; then
     # with an RTC timer so the alarm fires 8 hours later. Hibernate is completely
     # silent and dark — ideal when the PC is in a bedroom. rtcwake -m disk saves
     # state to swap and powers off, then the RTC restores power at wake_epoch.
+    #
+    # NOTE the -i (--ignore-inhibitors): this is a digital-wellbeing *enforcement*
+    # shutdown and must be unbypassable. Without -i, any process holding a block
+    # inhibitor — a game, Steam, a video player, or our own controller idle-off
+    # watcher — silently denies the hibernate ("Operation denied due to active
+    # block inhibitor") and the PC stays up all night. -i overrides all locks.
     tomorrow_dow=\$(date -d "tomorrow" +%u)
     case "\$tomorrow_dow" in
         1|5|6|7)
             wake_epoch=\$(( \$(printf '%(%s)T' -1) + 8 * 3600 ))
             logger -t day-specific-shutdown "Tomorrow is alarm day (dow=\$tomorrow_dow) — hibernating, RTC wake at epoch \$wake_epoch"
             /usr/bin/sudo /usr/sbin/rtcwake -m no -t "\$wake_epoch"
-            /usr/bin/systemctl hibernate
+            /usr/bin/systemctl hibernate -i
             ;;
         *)
             logger -t day-specific-shutdown "Tomorrow is not an alarm day — powering off normally"
-            /usr/bin/systemctl poweroff
+            /usr/bin/systemctl poweroff -i
             ;;
     esac
 else

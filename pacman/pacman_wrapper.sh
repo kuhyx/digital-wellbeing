@@ -210,15 +210,30 @@ ensure_periodic_maintenance() {
 
 	echo -e "${YELLOW}Periodic maintenance services missing or inactive. Running setup...${NC}" >&2
 
-	# Try to locate setup_periodic_system.sh
+	# Try to locate setup_periodic_system.sh. The installed wrapper lives in
+	# /usr/local/bin (so $self_dir won't contain it) and, for real transactions,
+	# runs as root under sudo (so $HOME points at /root). Resolve the invoking
+	# user's home via SUDO_USER and probe the known repo locations.
 	local setup_script=""
-	local self_dir
+	local self_dir real_user real_home
 	self_dir="$(dirname "$(readlink -f "$0")")"
-	if [[ -f "$self_dir/setup_periodic_system.sh" ]]; then
-		setup_script="$self_dir/setup_periodic_system.sh"
-	elif [[ -f "$HOME/linux-configuration/scripts/periodic_background/setup_periodic_system.sh" ]]; then
-		setup_script="$HOME/linux-configuration/scripts/periodic_background/setup_periodic_system.sh"
-	fi
+	real_user="${SUDO_USER:-${USER:-$(id -un)}}"
+	real_home="$(getent passwd "$real_user" 2>/dev/null | cut -d: -f6)"
+	[[ -z $real_home ]] && real_home="$HOME"
+
+	local -a setup_candidates=(
+		"$self_dir/setup_periodic_system.sh"
+		"$real_home/testsAndMisc/linux_configuration/scripts/periodic_background/setup_periodic_system.sh"
+		"$real_home/linux_configuration/scripts/periodic_background/setup_periodic_system.sh"
+		"$real_home/linux-configuration/scripts/periodic_background/setup_periodic_system.sh"
+	)
+	local candidate
+	for candidate in "${setup_candidates[@]}"; do
+		if [[ -f $candidate ]]; then
+			setup_script="$candidate"
+			break
+		fi
+	done
 
 	if [[ -n $setup_script ]]; then
 		if [[ $EUID -ne 0 ]]; then
@@ -743,6 +758,25 @@ fi
 if [[ ${1:-} == "--makepkg-capped" ]]; then
 	shift
 	run_makepkg_capped "$@"
+fi
+
+# ---------------------------------------------------------------------------
+# Fast pass-through for unprivileged, sandboxed and read-only invocations.
+#
+# makepkg/yay invoke pacman dozens of times for dependency resolution and
+# metadata (e.g. `pacman -T`, `-Qi`, `-Qq`) — as a non-root user and inside a
+# fakeroot build sandbox. Policy enforcement, service checks and package
+# cleanup only make sense for a genuine privileged transaction (root running
+# -S/-U/-R/-Syu ...), so for everything else we exec the real pacman directly.
+# This avoids the root-only policy-file read ("policy.sha256: Permission
+# denied"), the D-Bus "Failed to connect to system scope bus" errors from
+# systemctl inside the build sandbox, and the per-call log spam during builds.
+#
+# Note: inside fakeroot $EUID reports 0 (libfakeroot intercepts geteuid), so it
+# is the FAKEROOTKEY check — not the EUID check — that catches in-sandbox calls.
+# ---------------------------------------------------------------------------
+if [[ $EUID -ne 0 || -n ${FAKEROOTKEY:-} ]] || ! needs_unlock "$@"; then
+	exec "$PACMAN_BIN" "$@"
 fi
 
 # CRITICAL: Verify policy file integrity before any operations
