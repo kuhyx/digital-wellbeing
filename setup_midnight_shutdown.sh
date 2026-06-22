@@ -720,7 +720,7 @@ Requires=day-specific-shutdown.service
 [Timer]
 EOF
 		# Evening hours: from earliest shutdown hour to 23:30
-		for hour in $(seq "$earliest_hour" 24); do
+		for hour in $(seq "$earliest_hour" 23); do
 			printf 'OnCalendar=*-*-* %02d:00:00\n' "$hour"
 			printf 'OnCalendar=*-*-* %02d:30:00\n' "$hour"
 		done
@@ -940,12 +940,12 @@ if [[ $should_shutdown == true ]]; then
     # inhibitor — a game, Steam, a video player, or our own controller idle-off
     # watcher — silently denies the hibernate ("Operation denied due to active
     # block inhibitor") and the PC stays up all night. -i overrides all locks.
-    tomorrow_dow=\$(date -d "tomorrow" +%u)
-    case "\$tomorrow_dow" in
+    tomorrow_dow=$(date -d "tomorrow" +%u)
+    case "$tomorrow_dow" in
         1|5|6|7)
-            wake_epoch=\$(( \$(printf '%(%s)T' -1) + 8 * 3600 ))
-            logger -t day-specific-shutdown "Tomorrow is alarm day (dow=\$tomorrow_dow) — hibernating, RTC wake at epoch \$wake_epoch"
-            /usr/bin/sudo /usr/sbin/rtcwake -m no -t "\$wake_epoch"
+            wake_epoch=$(( $(printf '%(%s)T' -1) + 8 * 3600 ))
+            logger -t day-specific-shutdown "Tomorrow is alarm day (dow=$tomorrow_dow) — hibernating, RTC wake at epoch $wake_epoch"
+            /usr/bin/sudo /usr/sbin/rtcwake -m no -t "$wake_epoch"
             /usr/bin/systemctl hibernate -i
             ;;
         *)
