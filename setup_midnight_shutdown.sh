@@ -24,9 +24,24 @@ SCHEDULE_MORNING_END_HOUR=5
 # If a canonical config already exists, the script compares against it and
 # BLOCKS installation if the new values would make the schedule MORE LENIENT
 # (i.e., later shutdown hours or earlier morning end).
+#
+# The mechanical protection (chattr, canonical snapshot, path watcher,
+# pacman-hook) is provided by guard-lib (guardctl); this ratchet logic and
+# the conditional-delay unlock flow below are specific to this one guard
+# target and stay bespoke - guardctl's generic `unlock` can't represent
+# "hard-block one field, delay only if lenient, no delay if stricter".
 # ============================================================================
 
-CANONICAL_CONFIG="/usr/local/share/locked-shutdown-schedule.conf"
+GUARD_NAME="shutdown-schedule"
+CONFIG_FILE="/etc/shutdown-schedule.conf"
+
+# Prints guard-lib's canonical path for our instance, or nothing if the
+# instance isn't installed yet (first run on this machine).
+canonical_config_path() {
+	if command -v guardctl >/dev/null 2>&1 && guardctl file-guard status "$GUARD_NAME" >/dev/null 2>&1; then
+		guardctl file-guard canonical-path "$GUARD_NAME"
+	fi
+}
 
 # Validate that the schedule allows at least MIN_USAGE_HOURS of continuous PC usage.
 # The usable window is from SCHEDULE_MORNING_END_HOUR until each shutdown hour.
@@ -78,15 +93,18 @@ validate_minimum_usage_window
 
 # Check if trying to make schedule more lenient (later shutdown / earlier morning end)
 check_schedule_protection() {
-	# Skip check if no canonical config exists (first install)
-	if [[ ! -f $CANONICAL_CONFIG ]]; then
+	local canonical_config
+	canonical_config="$(canonical_config_path)"
+
+	# Skip check if no canonical config exists yet (first install)
+	if [[ -z $canonical_config ]] || [[ ! -f $canonical_config ]]; then
 		return 0
 	fi
 
 	# Load canonical values
 	local canonical_mon_wed canonical_thu_sun canonical_morning_end
 	# shellcheck source=/dev/null
-	source "$CANONICAL_CONFIG" 2>/dev/null || return 0
+	source "$canonical_config" 2>/dev/null || return 0
 	canonical_mon_wed="${MON_WED_HOUR:-}"
 	canonical_thu_sun="${THU_SUN_HOUR:-}"
 	canonical_morning_end="${MORNING_END_HOUR:-}"
@@ -259,15 +277,15 @@ show_current_status() {
 
 	echo ""
 
-	# Check config file protection status
+	# Check config file protection status (via guard-lib)
 	echo "Config File Protection Status:"
-	local config_file="/etc/shutdown-schedule.conf"
-	local canonical_file="/usr/local/share/locked-shutdown-schedule.conf"
+	local canonical_file
+	canonical_file="$(canonical_config_path)"
 
-	if [[ -f $config_file ]]; then
+	if [[ -f $CONFIG_FILE ]]; then
 		echo "✓ Config file exists"
 		# Check immutable attribute
-		if lsattr "$config_file" 2>/dev/null | grep -q '^....i'; then
+		if lsattr "$CONFIG_FILE" 2>/dev/null | grep -q '^....i'; then
 			echo "✓ Config file is immutable (chattr +i)"
 		else
 			echo "✗ Config file is NOT immutable"
@@ -276,15 +294,15 @@ show_current_status() {
 		echo "✗ Config file missing"
 	fi
 
-	if [[ -f $canonical_file ]]; then
-		echo "✓ Canonical copy exists"
+	if [[ -n $canonical_file ]] && [[ -f $canonical_file ]]; then
+		echo "✓ Canonical copy exists ($canonical_file)"
 	else
-		echo "✗ Canonical copy missing"
+		echo "✗ Canonical copy missing (guard-lib instance not installed?)"
 	fi
 
-	if systemctl is-enabled shutdown-schedule-guard.path &>/dev/null; then
+	if systemctl is-enabled "guard-file@${GUARD_NAME}.path" &>/dev/null; then
 		echo "✓ Config path watcher is enabled"
-		if systemctl is-active shutdown-schedule-guard.path &>/dev/null; then
+		if systemctl is-active "guard-file@${GUARD_NAME}.path" &>/dev/null; then
 			echo "✓ Config path watcher is active"
 		else
 			echo "✗ Config path watcher is not active"
@@ -308,31 +326,24 @@ show_current_status() {
 	echo ""
 }
 
-# Function to create shutdown schedule config file (shared with i3blocks countdown)
-# Also creates a canonical (protected) copy and sets immutable attribute
+# Function to create/update shutdown schedule config file (shared with
+# i3blocks countdown). Mechanical protection (canonical snapshot, chattr,
+# path watcher) is guard-lib's job via create_config_guard() below; this
+# function only decides what content should exist.
 create_shutdown_config() {
 	echo ""
 	echo "1. Creating Shutdown Schedule Config..."
 	echo "======================================="
 
-	local config_file="/etc/shutdown-schedule.conf"
-	local canonical_file="/usr/local/share/locked-shutdown-schedule.conf"
-
-	# Remove immutable attribute if it exists (to allow update)
-	chattr -i "$config_file" 2>/dev/null || true
-	chattr -i "$canonical_file" 2>/dev/null || true
-
-	cat >"$config_file" <<EOF
+	local new_content
+	new_content="$(cat <<EOF
 # Shutdown schedule configuration
 # This file is managed by setup_midnight_shutdown.sh
 # Used by: day-specific-shutdown-check.sh, shutdown_countdown.sh (i3blocks)
 #
-# WARNING: This file is protected by:
-#   1. Immutable attribute (chattr +i)
-#   2. Canonical copy at /usr/local/share/locked-shutdown-schedule.conf
-#   3. Path watcher service that auto-restores if modified
-#
-# Modifications to this file will be automatically reverted.
+# WARNING: This file is protected by guard-lib (guardctl): immutable
+# attribute, a canonical copy, and a path watcher that auto-restores it
+# if modified outside the sanctioned unlock flow.
 
 # Shutdown hour for Monday-Wednesday (24-hour format)
 MON_WED_HOUR=${SCHEDULE_MON_WED_HOUR}
@@ -343,73 +354,54 @@ THU_SUN_HOUR=${SCHEDULE_THU_SUN_HOUR}
 # Morning end hour (shutdown window ends at this hour)
 MORNING_END_HOUR=${SCHEDULE_MORNING_END_HOUR}
 EOF
+)"
 
-	chmod 644 "$config_file"
-	echo "✓ Created shutdown schedule config: $config_file"
-
-	# Create canonical (protected) copy
-	install -m 644 -D "$config_file" "$canonical_file"
-	echo "✓ Created canonical copy: $canonical_file"
-
-	# Set immutable attribute on both files
-	chattr +i "$config_file" || echo "⚠ Warning: Could not set immutable attribute on $config_file"
-	chattr +i "$canonical_file" || echo "⚠ Warning: Could not set immutable attribute on $canonical_file"
-	echo "✓ Set immutable attribute (chattr +i) on config files"
+	if guardctl file-guard status "$GUARD_NAME" >/dev/null 2>&1; then
+		# Already installed and this content already passed
+		# check_schedule_protection's ratchet check above - apply it
+		# directly, canonical first then target (same race-avoidance
+		# order adjust_shutdown_schedule.sh uses), then re-lock both.
+		local canonical_file
+		canonical_file="$(guardctl file-guard canonical-path "$GUARD_NAME")"
+		chattr -i "$canonical_file" 2>/dev/null || true
+		chattr -i "$CONFIG_FILE" 2>/dev/null || true
+		echo "$new_content" >"$canonical_file"
+		chmod 644 "$canonical_file"
+		chattr +i "$canonical_file" || echo "⚠ Warning: Could not set immutable attribute on $canonical_file"
+		echo "$new_content" >"$CONFIG_FILE"
+		chmod 644 "$CONFIG_FILE"
+		chattr +i "$CONFIG_FILE" || echo "⚠ Warning: Could not set immutable attribute on $CONFIG_FILE"
+		echo "✓ Updated config and canonical copy: $CONFIG_FILE"
+	else
+		# First install: guard-lib's install snapshots this content as
+		# the canonical copy, so just write the plain file here.
+		echo "$new_content" >"$CONFIG_FILE"
+		chmod 644 "$CONFIG_FILE"
+		echo "✓ Created shutdown schedule config: $CONFIG_FILE"
+	fi
 }
 
-# Function to create config guard (path watcher + enforcement + unlock script)
+# Function to install guard-lib protection (path watcher + enforcement)
+# and the bespoke ratchet-aware unlock script.
 create_config_guard() {
 	echo ""
-	echo "2. Creating Config Guard (Path Watcher + Enforcement)..."
-	echo "========================================================"
+	echo "2. Installing Config Guard (guard-lib + unlock script)..."
+	echo "=========================================================="
 
-	local enforce_script="/usr/local/sbin/enforce-shutdown-schedule.sh"
+	command -v guardctl >/dev/null 2>&1 || {
+		echo "Error: guardctl not found on PATH. Set up ~/guard-lib first (run its install.sh)." >&2
+		exit 1
+	}
+
+	if guardctl file-guard status "$GUARD_NAME" >/dev/null 2>&1; then
+		echo "✓ guard-lib instance '$GUARD_NAME' already installed (content applied above)"
+	else
+		guardctl file-guard install "$GUARD_NAME" --target "$CONFIG_FILE"
+		echo "✓ Installed guard-lib file-guard '$GUARD_NAME' (canonical snapshot, chattr +i, path watcher, initial enforcement)"
+	fi
+
 	# Obscure name for unlock script - not documented anywhere
 	local unlock_script="/usr/local/sbin/.sd-sched-mgmt"
-	local guard_service="/etc/systemd/system/shutdown-schedule-guard.service"
-	local guard_path="/etc/systemd/system/shutdown-schedule-guard.path"
-
-	# Create enforcement script
-	cat >"$enforce_script" <<'EOF'
-#!/bin/bash
-# Enforce canonical /etc/shutdown-schedule.conf contents
-# This script restores the config from canonical copy if tampered
-
-set -euo pipefail
-
-CANONICAL_SOURCE="/usr/local/share/locked-shutdown-schedule.conf"
-TARGET="/etc/shutdown-schedule.conf"
-LOG_FILE="/var/log/shutdown-schedule-guard.log"
-
-log() {
-    printf '%s - %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2
-}
-
-if [[ ! -f $CANONICAL_SOURCE ]]; then
-    log "Canonical config not found at $CANONICAL_SOURCE; aborting enforcement"
-    exit 0
-fi
-
-# Remove immutable attr to check/restore
-chattr -i -a "$TARGET" 2>/dev/null || true
-
-if ! cmp -s "$CANONICAL_SOURCE" "$TARGET"; then
-    log "CONFIG TAMPERING DETECTED – restoring $TARGET from canonical copy"
-    cp "$CANONICAL_SOURCE" "$TARGET"
-    chmod 644 "$TARGET"
-    log "Config restored successfully"
-else
-    log "No drift detected (contents identical)"
-fi
-
-# Re-apply immutable attribute
-chattr +i "$TARGET" || log "Failed to set immutable attribute"
-
-log "Enforcement complete"
-EOF
-
-	chmod +x "$enforce_script"
-	echo "✓ Created enforcement script: $enforce_script"
 
 	# Create unlock script with psychological delay
 	cat >"$unlock_script" <<'EOF'
@@ -423,8 +415,8 @@ EOF
 set -euo pipefail
 
 DELAY_SECONDS=45
+GUARD_NAME="shutdown-schedule"
 CONFIG_FILE="/etc/shutdown-schedule.conf"
-CANONICAL_FILE="/usr/local/share/locked-shutdown-schedule.conf"
 LOG_FILE="/var/log/shutdown-schedule-guard.log"
 EDITOR="${EDITOR:-nano}"
 TEMP_FILE="/tmp/shutdown-schedule-edit.$$"
@@ -439,6 +431,12 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+CANONICAL_FILE="$(guardctl file-guard canonical-path "$GUARD_NAME")"
+if [[ -z "$CANONICAL_FILE" ]]; then
+    echo "Error: guard-lib instance '$GUARD_NAME' is not installed (guardctl file-guard canonical-path returned empty)" >&2
+    exit 1
+fi
+
 # Log the unlock attempt
 log "=== UNLOCK ATTEMPT by $(logname 2>/dev/null || echo 'unknown') from TTY $(tty 2>/dev/null || echo 'unknown') ==="
 
@@ -447,6 +445,7 @@ OLD_MON_WED=""
 OLD_THU_SUN=""
 OLD_MORNING_END=""
 if [[ -f "$CANONICAL_FILE" ]]; then
+    # shellcheck source=/dev/null
     source "$CANONICAL_FILE" 2>/dev/null || true
     OLD_MON_WED="${MON_WED_HOUR:-}"
     OLD_THU_SUN="${THU_SUN_HOUR:-}"
@@ -468,8 +467,14 @@ echo "  ⏳ Making shutdown LATER (lenient) = ${DELAY_SECONDS}s delay required"
 echo "  ❌ Lowering MORNING_END_HOUR = BLOCKED (would shorten shutdown window)"
 echo ""
 
-# Stop the path watcher temporarily
-systemctl stop shutdown-schedule-guard.path 2>/dev/null || true
+# Stop the path watcher temporarily. This is NOT optional: `chattr -i`
+# below is itself enough to fire guard-file@shutdown-schedule.path (its
+# PathModified reacts to attribute changes, not just content writes), and
+# that watcher's enforce pass unconditionally re-locks the target at the
+# end even when no drift is found - which would silently re-lock the file
+# out from under us during the 45s delay below. Confirmed live: without
+# this stop, the delayed-apply cp failed with "Operation not permitted".
+systemctl stop "guard-file@${GUARD_NAME}.path" 2>/dev/null || true
 
 # Remove immutable attributes
 chattr -i -a "$CONFIG_FILE" 2>/dev/null || true
@@ -488,6 +493,7 @@ $EDITOR "$TEMP_FILE"
 NEW_MON_WED=""
 NEW_THU_SUN=""
 NEW_MORNING_END=""
+# shellcheck source=/dev/null
 source "$TEMP_FILE" 2>/dev/null || true
 NEW_MON_WED="${MON_WED_HOUR:-}"
 NEW_THU_SUN="${THU_SUN_HOUR:-}"
@@ -514,7 +520,7 @@ if [[ -n "$OLD_MORNING_END" ]] && [[ -n "$NEW_MORNING_END" ]]; then
         # Re-apply protection
         chattr +i "$CONFIG_FILE" 2>/dev/null || true
         chattr +i "$CANONICAL_FILE" 2>/dev/null || true
-        systemctl start shutdown-schedule-guard.path 2>/dev/null || true
+        systemctl start "guard-file@${GUARD_NAME}.path" 2>/dev/null || true
         log "BLOCKED: User tried to lower MORNING_END_HOUR from $OLD_MORNING_END to $NEW_MORNING_END"
         exit 1
     fi
@@ -607,8 +613,8 @@ chmod 644 "$CANONICAL_FILE"
 chattr +i "$CONFIG_FILE" || echo "Warning: Could not set immutable attribute"
 chattr +i "$CANONICAL_FILE" || echo "Warning: Could not set immutable attribute"
 
-# Restart path watcher
-systemctl start shutdown-schedule-guard.path 2>/dev/null || true
+# Restart path watcher (stopped near the start of this script)
+systemctl start "guard-file@${GUARD_NAME}.path" 2>/dev/null || true
 
 log "Config updated and re-locked by user"
 
@@ -618,6 +624,7 @@ echo "✓ Canonical copy updated"
 echo "✓ Path watcher re-enabled"
 echo ""
 echo "New schedule (will take effect on next timer check):"
+# shellcheck source=/dev/null
 source "$CONFIG_FILE" 2>/dev/null || true
 echo "  Monday-Wednesday: ${MON_WED_HOUR:-??}:00 - 0${MORNING_END_HOUR:-?}:00"
 echo "  Thursday-Sunday:  ${THU_SUN_HOUR:-??}:00 - 0${MORNING_END_HOUR:-?}:00"
@@ -626,48 +633,6 @@ EOF
 
 	chmod +x "$unlock_script"
 	# Silently create unlock script - do not announce its existence
-
-	# Create path watcher unit
-	cat >"$guard_path" <<'EOF'
-[Unit]
-Description=Watch /etc/shutdown-schedule.conf and trigger enforcement
-
-[Path]
-PathChanged=/etc/shutdown-schedule.conf
-Unit=shutdown-schedule-guard.service
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-	echo "✓ Created path watcher: $guard_path"
-
-	# Create enforcement service
-	cat >"$guard_service" <<'EOF'
-[Unit]
-Description=Enforce canonical /etc/shutdown-schedule.conf contents
-After=local-fs.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/enforce-shutdown-schedule.sh
-Nice=10
-IOSchedulingClass=idle
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-	echo "✓ Created guard service: $guard_service"
-
-	# Reload and enable
-	systemctl daemon-reload
-	systemctl enable --now shutdown-schedule-guard.path
-	echo "✓ Enabled and started shutdown-schedule-guard.path"
-
-	# Run initial enforcement
-	"$enforce_script" || echo "⚠ Warning: Initial enforcement returned non-zero"
-	echo "✓ Ran initial enforcement"
 }
 
 # Function to create the shutdown service
@@ -1287,12 +1252,12 @@ test_setup() {
 
 	echo ""
 	echo "Config file protection status:"
-	local config_file="/etc/shutdown-schedule.conf"
-	local canonical_file="/usr/local/share/locked-shutdown-schedule.conf"
+	local canonical_file
+	canonical_file="$(canonical_config_path)"
 
-	if [[ -f $config_file ]]; then
+	if [[ -f $CONFIG_FILE ]]; then
 		echo "✓ Config file exists"
-		if lsattr "$config_file" 2>/dev/null | grep -q '^....i'; then
+		if lsattr "$CONFIG_FILE" 2>/dev/null | grep -q '^....i'; then
 			echo "✓ Config file is immutable"
 		else
 			echo "✗ Config file is NOT immutable"
@@ -1301,19 +1266,19 @@ test_setup() {
 		echo "✗ Config file missing"
 	fi
 
-	if [[ -f $canonical_file ]]; then
+	if [[ -n $canonical_file ]] && [[ -f $canonical_file ]]; then
 		echo "✓ Canonical copy exists"
 	else
 		echo "✗ Canonical copy missing"
 	fi
 
-	if systemctl is-enabled shutdown-schedule-guard.path &>/dev/null; then
+	if systemctl is-enabled "guard-file@${GUARD_NAME}.path" &>/dev/null; then
 		echo "✓ Config guard path watcher is enabled"
 	else
 		echo "✗ Config guard path watcher is not enabled"
 	fi
 
-	if systemctl is-active shutdown-schedule-guard.path &>/dev/null; then
+	if systemctl is-active "guard-file@${GUARD_NAME}.path" &>/dev/null; then
 		echo "✓ Config guard path watcher is active"
 	else
 		echo "✗ Config guard path watcher is not active"

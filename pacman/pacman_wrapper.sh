@@ -63,6 +63,7 @@ verify_policy_integrity() {
 	return 0
 }
 
+# shellcheck disable=SC2329 # invoked indirectly, see is_blocked_package_name/is_greylisted_package_name callers below
 load_policy_lists() {
 	if [[ $POLICY_LISTS_LOADED -eq 1 ]]; then
 		return
@@ -139,11 +140,11 @@ needs_unlock() {
 	return 1
 }
 
-pacman_hooks_manage_hosts_guard() {
-	local pre_hook="/etc/pacman.d/hooks/10-unlock-etc-hosts.hook"
-	local post_hook="/etc/pacman.d/hooks/90-relock-etc-hosts.hook"
-	local pre_exec="/usr/local/share/hosts-guard/pacman-pre-unlock-hosts.sh"
-	local post_exec="/usr/local/share/hosts-guard/pacman-post-relock-hosts.sh"
+pacman_hooks_manage_guard_lib() {
+	local pre_hook="/etc/pacman.d/hooks/10-guard-lib-unlock-all.hook"
+	local post_hook="/etc/pacman.d/hooks/90-guard-lib-relock-all.hook"
+	local pre_exec="/etc/guard-lib/pacman-hooks/guard-lib-unlock-all.sh"
+	local post_exec="/etc/guard-lib/pacman-hooks/guard-lib-relock-all.sh"
 
 	if [[ ! -f $pre_hook || ! -f $post_hook ]]; then
 		return 1
@@ -152,32 +153,35 @@ pacman_hooks_manage_hosts_guard() {
 	grep -Fq "$pre_exec" "$pre_hook" && grep -Fq "$post_exec" "$post_hook"
 }
 
-should_use_wrapper_hosts_guard_fallback() {
+should_use_wrapper_guard_lib_fallback() {
 	if ! needs_unlock "$@"; then
 		return 1
 	fi
 
-	if pacman_hooks_manage_hosts_guard; then
+	if pacman_hooks_manage_guard_lib; then
 		return 1
 	fi
 
 	return 0
 }
 
-# Run pre/post hooks for /etc/hosts guard if present
-pre_unlock_hosts() {
-	local pre="/usr/local/share/hosts-guard/pacman-pre-unlock-hosts.sh"
+# Run guard-lib's own generic unlock-all/relock-all scripts directly if
+# pacman's own hooks for them are missing (e.g. hooks disabled/misconfigured).
+# These cover every registered file-guard instance (hosts, nsswitch,
+# resolved, shutdown-schedule, ...), not just /etc/hosts.
+pre_unlock_guard_lib() {
+	local pre="/etc/guard-lib/pacman-hooks/guard-lib-unlock-all.sh"
 	if [[ -x $pre ]]; then
-		echo -e "${CYAN}[hosts-guard] Preparing /etc/hosts for transaction...${NC}" >&2
+		echo -e "${CYAN}[guard-lib] Preparing guarded files for transaction...${NC}" >&2
 		/bin/bash "$pre" || true
 	fi
 }
 
-post_relock_hosts() {
-	local post="/usr/local/share/hosts-guard/pacman-post-relock-hosts.sh"
+post_relock_guard_lib() {
+	local post="/etc/guard-lib/pacman-hooks/guard-lib-relock-all.sh"
 	if [[ -x $post ]]; then
 		/bin/bash "$post" || true
-		echo -e "${CYAN}[hosts-guard] Protections re-applied to /etc/hosts.${NC}" >&2
+		echo -e "${CYAN}[guard-lib] Protections re-applied to guarded files.${NC}" >&2
 	fi
 }
 
@@ -339,6 +343,7 @@ function display_operation() {
 }
 
 # Helper: return 0 if the given package name is blocked by policy
+# shellcheck disable=SC2329 # invoked indirectly by name (remove_installed_packages_matching, check_install_for)
 function is_blocked_package_name() {
 	load_policy_lists
 	local normalized="${1,,}"
@@ -359,6 +364,7 @@ function is_blocked_package_name() {
 }
 
 # Helper: return 0 if the given package name is greylisted (challenge required)
+# shellcheck disable=SC2329 # invoked indirectly by name (remove_installed_packages_matching, check_install_for)
 function is_greylisted_package_name() {
 	load_policy_lists
 	local normalized="${1,,}"
@@ -573,6 +579,7 @@ function check_for_always_blocked() {
 }
 
 # Helper to check if a package name is steam
+# shellcheck disable=SC2329 # invoked indirectly by name (check_install_for)
 function is_steam_package() {
 	[[ $1 == "steam" ]]
 }
@@ -830,19 +837,19 @@ if ! check_and_handle_db_lock "$@"; then
 	exit 1
 fi
 
-manual_hosts_guard=0
+manual_guard_lib_fallback=0
 
-# Execute the real pacman command (with /etc/hosts guard handling)
-if should_use_wrapper_hosts_guard_fallback "$@"; then
-	pre_unlock_hosts
-	manual_hosts_guard=1
+# Execute the real pacman command (with guard-lib fallback handling)
+if should_use_wrapper_guard_lib_fallback "$@"; then
+	pre_unlock_guard_lib
+	manual_guard_lib_fallback=1
 fi
 
 "$PACMAN_BIN" "$@"
 exit_code=$?
 
-if [[ $manual_hosts_guard -eq 1 ]]; then
-	post_relock_hosts
+if [[ $manual_guard_lib_fallback -eq 1 ]]; then
+	post_relock_guard_lib
 fi
 
 # Record end time for statistics
@@ -951,7 +958,8 @@ auto_remove_virtualbox_vms() {
 
 	while IFS= read -r line; do
 		# VBoxManage list vms output format: "VM Name" {uuid}
-		vm_name=$(echo "$line" | sed 's/^"\(.*\)" {.*}$/\1/')
+		vm_name="${line#\"}"
+		vm_name="${vm_name%%\"*}"
 		if [[ -z $vm_name ]]; then
 			continue
 		fi
