@@ -34,6 +34,9 @@ WHITELIST_FILE = STATE_DIR / "whitelist"
 POLL_INTERVAL = 2  # seconds between process checks
 DEFAULT_WHITELIST_MINUTES = 5
 
+# /proc/PID/stat state character for a dead-but-unreaped process.
+ZOMBIE_STATE = "Z"
+
 # Process patterns
 STEAM_PATTERNS = frozenset(
     [
@@ -161,18 +164,53 @@ def notify(title: str, message: str, urgency: str = "normal") -> None:
         )
 
 
+def _parse_stat(stat_line: str) -> tuple[str, str] | None:
+    """Extract the (name, state) pair from a /proc/PID/stat line.
+
+    The stat format is ``pid (comm) state ...``. The comm field may itself
+    contain spaces and ')' characters, so the name is everything between the
+    first '(' and the *last* ')' - splitting on whitespace would corrupt any
+    process whose name embeds either.
+
+    Args:
+        stat_line: Raw contents of a /proc/PID/stat file.
+
+    Returns:
+        A (name, state) tuple, or None if the line is malformed.
+    """
+    open_paren = stat_line.find("(")
+    before_close, sep, after_close = stat_line.rpartition(")")
+    if open_paren == -1 or not sep:
+        return None
+    state_fields = after_close.split()
+    if not state_fields:
+        return None
+    return before_close[open_paren + 1 :], state_fields[0]
+
+
 def get_running_processes() -> set[str]:
     """Get set of currently running process names by reading /proc directly.
 
-    Reads /proc/*/comm to avoid forking a subprocess on every poll cycle.
+    Reads /proc/*/stat rather than /proc/*/comm: both cost one read per PID
+    (so the poll loop stays fork-free), but stat also carries the process
+    state. That distinction matters because a dead process keeps its name
+    until the parent reaps it, so a crashed "steam" lingers as a zombie and
+    would otherwise be counted as a running Steam. Zombies are skipped.
+
+    Names are truncated to 15 characters here exactly as they are in
+    /proc/*/comm, so the module's process patterns match unchanged.
     """
     processes: set[str] = set()
     try:
-        for comm_path in Path("/proc").glob("*/comm"):
+        for stat_path in Path("/proc").glob("*/stat"):
             with contextlib.suppress(OSError):
-                proc_name = comm_path.read_text().strip().lower()
-                if proc_name:
-                    processes.add(proc_name)
+                parsed = _parse_stat(stat_path.read_text())
+                if parsed is None:
+                    continue
+                proc_name, state = parsed
+                if state == ZOMBIE_STATE or not proc_name:
+                    continue
+                processes.add(proc_name.lower())
     except OSError as exc:
         log(f"Error reading /proc: {exc}")
     return processes
