@@ -378,20 +378,6 @@ function is_greylisted_package_name() {
 	return 1
 }
 
-# Helper: detect if current invocation includes --noconfirm
-function has_noconfirm_flag() {
-	for arg in "$@"; do
-		if [[ $arg == "--noconfirm" ]]; then
-			return 0
-		fi
-	done
-	return 1
-}
-
-current_epoch() {
-	printf '%(%s)T\n' -1
-}
-
 current_day_of_week() {
 	printf '%(%u)T\n' -1
 }
@@ -404,116 +390,10 @@ current_day_name() {
 	printf '%(%A)T\n' -1
 }
 
-# Helper: get list of PIDs holding a lock file (excluding our own PID)
-# Populates the $holders array
-get_lock_holders() {
-	local lock_file="$1"
-	holders=()
-	if command -v fuser >/dev/null 2>&1; then
-		read -r -a holders <<< "$(fuser "$lock_file" 2>/dev/null || true)"
-	elif command -v lsof >/dev/null 2>&1; then
-		mapfile -t holders < <(lsof -t "$lock_file" 2>/dev/null || true)
-	fi
-	# Filter out our own PID
-	if [[ ${#holders[@]} -gt 0 ]]; then
-		local -a filtered=()
-		for pid in "${holders[@]}"; do
-			[[ $pid -eq $$ ]] && continue
-			filtered+=("$pid")
-		done
-		holders=("${filtered[@]}")
-	fi
-}
-
-# Handle stale pacman database lock if present and no package managers are running
-check_and_handle_db_lock() {
-	local lock_file="/var/lib/pacman/db.lck"
-	# Quick exit if no lock
-	if [[ ! -e $lock_file ]]; then
-		return 0
-	fi
-
-	# Determine which processes actually have the lock open
-	local -a holders=()
-	get_lock_holders "$lock_file"
-
-	if [[ ${#holders[@]} -gt 0 ]]; then
-		local pac_holder=0
-		local gui_holder=0
-		for pid in "${holders[@]}"; do
-			local comm args lower
-			comm=$(ps -p "$pid" -o comm= 2>/dev/null || true)
-			args=$(ps -p "$pid" -o args= 2>/dev/null || true)
-			lower="${comm,,} ${args,,}"
-			if [[ $lower == *" pacman"* || $lower == pacman* || $lower == *"/pacman "* || $lower == *" pamac"* ]]; then
-				pac_holder=1
-			elif [[ $lower == *packagekit* || $lower == *gnome-software* || $lower == *discover* ]]; then
-				gui_holder=1
-			fi
-		done
-
-		if [[ $pac_holder -eq 1 ]]; then
-			echo -e "${RED}Another pacman/pamac transaction is holding the database lock. Try again later.${NC}" >&2
-			return 1
-		fi
-
-		if [[ $gui_holder -eq 1 ]]; then
-			echo -e "${YELLOW}A background software updater is holding the pacman lock. Attempting to stop it...${NC}" >&2
-			if command -v systemctl >/dev/null 2>&1; then
-				systemctl --quiet stop packagekit.service 2>/dev/null || true
-				systemctl --quiet stop packagekit 2>/dev/null || true
-			fi
-			pkill -x packagekitd 2>/dev/null || true
-			pkill -f gnome-software 2>/dev/null || true
-			pkill -f discover 2>/dev/null || true
-			sleep 1
-
-			# Re-check holders
-			get_lock_holders "$lock_file"
-			if [[ ${#holders[@]} -gt 0 ]]; then
-				echo -e "${RED}Cannot free the pacman lock; another process still holds it. Try again later.${NC}" >&2
-				return 1
-			fi
-		fi
-	fi
-
-	# Helper to remove a file with sudo if needed
-	remove_file_as_root() {
-		local f="$1"
-		if [[ $EUID -ne 0 ]]; then
-			sudo rm -f "$f"
-		else
-			rm -f "$f"
-		fi
-	}
-
-	# Decide whether to remove the lock
-	local now epoch age
-	if epoch=$(stat -c %Y "$lock_file" 2>/dev/null); then
-		now=$(current_epoch)
-		age=$((now - epoch))
-	else
-		age=999999
-	fi
-
-	# Auto-remove in non-interactive mode (--noconfirm) or if the lock is older than 10 minutes
-	if has_noconfirm_flag "$@" || [[ $age -ge 600 ]]; then
-		echo -e "${YELLOW}Stale pacman lock detected (age: ${age}s). Removing it automatically...${NC}" >&2
-		remove_file_as_root "$lock_file" || return 1
-		return 0
-	fi
-
-	# Interactive prompt (15s timeout)
-	echo -e "${YELLOW}A pacman lock exists but no active pacman is running.${NC}" >&2
-	echo -e "${CYAN}Lock path:${NC} $lock_file (age: ${age}s)" >&2
-	read -r -t 15 -p $'Remove stale lock and continue? [y/N]: ' reply || reply="n"
-	if [[ ${reply,,} == "y" || ${reply,,} == "yes" ]]; then
-		remove_file_as_root "$lock_file" || return 1
-		return 0
-	fi
-	echo -e "${RED}Aborting due to existing pacman lock. Close other updaters and retry, or run with --noconfirm to auto-clear stale locks.${NC}" >&2
-	return 1
-}
+# Stale pacman DB-lock detection/handling (get_lock_holders,
+# check_and_handle_db_lock) plus has_noconfirm_flag and current_epoch now live in
+# the shared pacman_lock_lib.sh, sourced after the integrity check below. This is
+# the single source of truth shared with makepkg_wrapper.sh.
 
 # Generic function to remove installed packages matching a filter
 # Args: check_function label_prefix
@@ -789,6 +669,22 @@ fi
 # CRITICAL: Verify policy file integrity before any operations
 if ! verify_policy_integrity; then
 	exit 1
+fi
+
+# Load shared stale-lock helpers (get_lock_holders, check_and_handle_db_lock,
+# has_noconfirm_flag, current_epoch), AFTER integrity verification so a tampered
+# lib (listed in the integrity manifest) is caught before it is sourced. Sourced
+# here — past the fast-path — so build-time non-root calls skip it entirely.
+_WRAPPER_DIR="$(dirname "$(readlink -f "$0")")"
+if [[ -r "$_WRAPPER_DIR/pacman_lock_lib.sh" ]]; then
+	# shellcheck source=pacman_lock_lib.sh
+	source "$_WRAPPER_DIR/pacman_lock_lib.sh"
+else
+	# Fail open: a missing lib must not brick pacman (you'd need pacman to
+	# reinstall it). Skip stale-lock handling with safe no-op fallbacks.
+	echo -e "${YELLOW}Warning: pacman_lock_lib.sh missing; stale-lock handling disabled.${NC}" >&2
+	check_and_handle_db_lock() { return 0; }
+	current_epoch() { printf '%(%s)T\n' -1; }
 fi
 
 # Before any pacman action, ensure maintenance services exist

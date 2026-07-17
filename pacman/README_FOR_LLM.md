@@ -241,11 +241,46 @@ remove_installed_blocked_packages() {
 
 ## Stale Lock Handling
 
+The stale-lock logic lives in **`pacman_lock_lib.sh`** (shared, sourced by both
+`pacman_wrapper.sh` and `makepkg_wrapper.sh` — single source of truth). The
+wrapper sources it only AFTER `verify_policy_integrity`, and the lib is listed in
+the integrity manifest, so a tampered lib is rejected before it runs.
+
 If `/var/lib/pacman/db.lck` exists but no pacman is running:
 
 - Interactive: Prompts user to remove (15s timeout)
-- Non-interactive (`--noconfirm`): Auto-removes if lock is >10 minutes old
-- If another pacman is actually running: Blocks with error
+- Non-interactive (`--noconfirm`): Auto-removes; also auto-removes if lock is
+  > 10 minutes old
+- If a real pacman/pamac process is running: Blocks with error. Detection uses
+  `fuser`/`lsof` on the lock file AND a system-wide `pgrep -x pacman` guard
+  (`pacman_process_running`) so an UNPRIVILEGED caller (makepkg is never root)
+  can still see a ROOT `pacman -Syu` that its own `fuser` cannot.
+
+### Makepkg wrapper
+
+`/usr/bin/makepkg` is symlinked to `makepkg_wrapper` (real binary at
+`/usr/bin/makepkg.orig`). Vendored `makepkg`'s `run_pacman()` has its own
+lock-wait that checks ONLY file existence with no timeout, so an orphaned
+`db.lck` hangs `makepkg -i` forever ("Pacman is currently in use, please
+wait...") _before_ pacman is ever called — the pacman wrapper's cleanup never
+gets a turn. `makepkg_wrapper` closes this: for install-bound invocations
+(`-i`/`--install`) it clears an orphaned lock up front, then execs real makepkg.
+It bypasses (execs real makepkg unchanged) inside a fakeroot build sandbox
+(`FAKEROOTKEY` set) or for non-install invocations, and **fails open** — if the
+shared lib is missing it execs real makepkg rather than break all builds.
+
+### Upgrade survival
+
+A `pacman-git` upgrade reinstalls `/usr/bin/pacman` and `/usr/bin/makepkg` as
+stock binaries, clobbering the wrapper symlinks. Two mechanisms restore them:
+
+- **PostTransaction hook** `/etc/pacman.d/hooks/96-restore-pkg-wrappers.hook`
+  (Target = pacman/pacman-git) runs `rewrap_pkg_managers.sh` (file-ops only,
+  never calls pacman) to re-establish both symlinks and refresh the `.orig`
+  backups. NOTE: alpm `Operation` accepts only Install/Upgrade/Remove — an
+  invalid value aborts EVERY transaction; validate with a real `-S` install.
+- **Drift verifier** `check_makepkg_wrapper()` in `check_and_enable_services.sh`
+  plus the hourly periodic driver re-running both installers.
 
 ## Maintenance Auto-Setup
 

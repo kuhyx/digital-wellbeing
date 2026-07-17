@@ -20,6 +20,7 @@ NC='\033[0m' # No Color
 
 # Script locations
 WRAPPER_SOURCE="$(dirname "$0")/pacman_wrapper.sh"
+LOCK_LIB_SOURCE="$(dirname "$0")/pacman_lock_lib.sh"
 WORDS_SOURCE="$(dirname "$0")/words.txt"
 BLOCKED_SOURCE="$(dirname "$0")/pacman_blocked_keywords.txt"
 WHITELIST_SOURCE="$(dirname "$0")/pacman_whitelist.txt"
@@ -28,6 +29,7 @@ MAKEPKG_CAPPED_SOURCE="$(dirname "$0")/makepkg_capped.sh"
 MKPKG_SOURCE="$(dirname "$0")/mkpkg.sh"
 INSTALL_DIR="/usr/local/bin"
 WRAPPER_DEST="${INSTALL_DIR}/pacman_wrapper"
+LOCK_LIB_DEST="${INSTALL_DIR}/pacman_lock_lib.sh"
 WORDS_DEST="${INSTALL_DIR}/words.txt"
 BLOCKED_DEST="${INSTALL_DIR}/pacman_blocked_keywords.txt"
 WHITELIST_DEST="${INSTALL_DIR}/pacman_whitelist.txt"
@@ -115,6 +117,8 @@ echo -e "${CYAN}Installing pacman wrapper...${NC}"
 # Install the wrapper script
 echo -e "${BLUE}Copying wrapper script to ${WRAPPER_DEST}...${NC}"
 copy_managed_file "$WRAPPER_SOURCE" "$WRAPPER_DEST" required "wrapper script"
+copy_managed_file "$LOCK_LIB_SOURCE" "$LOCK_LIB_DEST" required "stale-lock library"
+chmod 644 "$LOCK_LIB_DEST"
 copy_managed_file "$WORDS_SOURCE" "$WORDS_DEST" required "words list"
 copy_managed_file "$BLOCKED_SOURCE" "$BLOCKED_DEST" required "blocked keywords list"
 copy_managed_file "$WHITELIST_SOURCE" "$WHITELIST_DEST" optional "whitelist"
@@ -129,10 +133,13 @@ chmod 644 "$WORDS_DEST" "$BLOCKED_DEST" "$WHITELIST_DEST" "$GREYLIST_DEST" 2> /d
 # Automatically use symbolic link installation method
 echo -e "${YELLOW}Installing using symbolic link method...${NC}"
 
-# Backup original pacman
-if [ ! -f "/usr/bin/pacman.orig" ]; then
+# Backup original pacman. Refresh the backup whenever /usr/bin/pacman is a real
+# file (e.g. a pacman-git upgrade replaced our symlink with the new binary), but
+# NEVER when it is already our symlink — copying the symlink's target would put
+# the wrapper into pacman.orig and cause an exec loop.
+if [ ! -L /usr/bin/pacman ]; then
   echo -e "${BLUE}Backing up original pacman to /usr/bin/pacman.orig...${NC}"
-  cp /usr/bin/pacman /usr/bin/pacman.orig
+  cp -f /usr/bin/pacman /usr/bin/pacman.orig
 fi
 
 # Update the PACMAN_BIN variable in the wrapper to point to the original
@@ -150,6 +157,7 @@ unlock_immutable_file_if_needed "$INTEGRITY_FILE"
 missing_files=()
 [[ ! -f "$BLOCKED_DEST" ]] && missing_files+=("$BLOCKED_DEST")
 [[ ! -f "$GREYLIST_DEST" ]] && missing_files+=("$GREYLIST_DEST")
+[[ ! -f "$LOCK_LIB_DEST" ]] && missing_files+=("$LOCK_LIB_DEST")
 
 if [[ ${#missing_files[@]} -gt 0 ]]; then
   echo -e "${RED}Error: Critical policy files are missing:${NC}"
@@ -161,6 +169,10 @@ fi
 {
   sha256sum "$BLOCKED_DEST" || { echo -e "${RED}Failed to checksum blocked list${NC}" >&2; exit 1; }
   sha256sum "$GREYLIST_DEST" || { echo -e "${RED}Failed to checksum greylist${NC}" >&2; exit 1; }
+  # The shared stale-lock library is executed (sourced) by the wrapper, so it is
+  # integrity-checked too: pacman_wrapper.sh sources it only AFTER
+  # verify_policy_integrity passes, so a tampered lib is rejected before it runs.
+  sha256sum "$LOCK_LIB_DEST" || { echo -e "${RED}Failed to checksum lock library${NC}" >&2; exit 1; }
   # Whitelist is optional
   if [[ -f "$WHITELIST_DEST" ]]; then
     sha256sum "$WHITELIST_DEST" || { echo -e "${RED}Failed to checksum whitelist${NC}" >&2; exit 1; }
@@ -184,6 +196,7 @@ echo -e "${BLUE}Protecting policy files from modification...${NC}"
 if command -v chattr > /dev/null 2>&1; then
   chattr +i "$BLOCKED_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make blocked list immutable${NC}"
   chattr +i "$GREYLIST_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make greylist immutable${NC}"
+  chattr +i "$LOCK_LIB_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make lock library immutable${NC}"
   # Note: whitelist is intentionally left modifiable for user convenience
 else
   echo -e "${YELLOW}Warning: chattr not available, policy files will not be immutable${NC}"

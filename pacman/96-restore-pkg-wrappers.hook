@@ -1,0 +1,16 @@
+# Restore the pacman + makepkg wrapper symlinks after a pacman-git upgrade
+# overwrites /usr/bin/pacman and /usr/bin/makepkg with the stock binaries.
+# PostTransaction + file-ops-only Exec (never calls pacman) => safe inside the
+# transaction. See rewrap_pkg_managers.sh.
+[Trigger]
+Type = Package
+Operation = Upgrade
+Operation = Install
+Target = pacman
+Target = pacman-git
+
+[Action]
+Description = Restoring pacman/makepkg wrapper symlinks...
+When = PostTransaction
+Exec = /usr/local/bin/rewrap_pkg_managers.sh
+Depends = coreutils
