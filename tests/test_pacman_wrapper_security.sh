@@ -4,8 +4,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WRAPPER_DIR="$SCRIPT_DIR/../scripts/digital_wellbeing/pacman"
-VBOX_DIR="$SCRIPT_DIR/../scripts/digital_wellbeing/virtualbox"
+WRAPPER_DIR="$SCRIPT_DIR/../scripts/periodic_background/digital_wellbeing/pacman"
+VBOX_DIR="$SCRIPT_DIR/../scripts/periodic_background/digital_wellbeing/virtualbox"
 
 echo "=== Testing Pacman Wrapper Security Enhancements ==="
 echo ""
@@ -179,6 +179,42 @@ if grep -q "unlock_immutable_file_if_needed" "$WRAPPER_DIR/install_pacman_wrappe
     echo "✓ Installer immutable-file handling found"
 else
     echo "✗ Installer immutable-file handling missing"
+    exit 1
+fi
+
+# Test: shared lock library syntax
+echo "[TEST] Checking shared lock library syntax..."
+if bash -n "$WRAPPER_DIR/pacman_lock_lib.sh"; then
+    echo "✓ pacman_lock_lib.sh syntax is valid"
+else
+    echo "✗ pacman_lock_lib.sh has syntax errors"
+    exit 1
+fi
+
+# Test: wrapper sources the shared lock library
+echo "[TEST] Verifying wrapper sources the shared lock library..."
+if grep -q 'source .*pacman_lock_lib.sh' "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ Wrapper sources pacman_lock_lib.sh"
+else
+    echo "✗ Wrapper does not source pacman_lock_lib.sh"
+    exit 1
+fi
+
+# Test: the lock library is covered by the integrity manifest
+echo "[TEST] Verifying installer checksums the lock library..."
+if grep -qF 'sha256sum "$LOCK_LIB_DEST"' "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+    echo "✓ Lock library is included in the integrity manifest"
+else
+    echo "✗ Lock library not checksummed by installer"
+    exit 1
+fi
+
+# Test: lib is sourced AFTER integrity verification (tamper caught before source)
+echo "[TEST] Verifying lock library is sourced after integrity check..."
+if awk '/verify_policy_integrity/{v=NR} /source .*pacman_lock_lib.sh/{s=NR} END{exit !(v && s && s>v)}' "$WRAPPER_DIR/pacman_wrapper.sh"; then
+    echo "✓ Lock library sourced after verify_policy_integrity"
+else
+    echo "✗ Lock library not sourced after integrity verification"
     exit 1
 fi
 
