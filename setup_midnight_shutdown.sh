@@ -1712,12 +1712,18 @@ enable_midnight_shutdown() {
 	# Test setup
 	test_setup
 
-	# Lock this setup script so values + checks can't be silently edited
-	local this_script
-	this_script="$(readlink -f "$0")"
-	chattr +i "$this_script" 2>/dev/null \
-		|| echo "⚠ Warning: Could not set immutable attribute on setup script"
-	echo "✓ Setup script locked (chattr +i) — run 'sudo chattr -i $this_script' to unlock for future changes"
+	# NOTE: this used to `chattr +i` its own source ("lock this setup script so
+	# values + checks can't be silently edited"). Do NOT reintroduce that: making
+	# a git-tracked file immutable breaks git. pre-commit clears unstaged changes
+	# with `git checkout -- .`; that unlink fails with "Operation not permitted"
+	# on an immutable file, the context manager aborts, and the restore never
+	# runs — silently reverting your OTHER unstaged edits on every commit/push.
+	#
+	# Enforcement does not depend on it: /etc/shutdown-schedule.conf is chattr +i,
+	# guard-lib keeps a canonical snapshot + path watcher that re-enforces it, the
+	# monitor service protects the timer, and screen_locker's ratchet only accepts
+	# same-or-stricter values. Editing this source changes nothing until setup is
+	# re-run as root, which rewrites the guarded config anyway.
 
 	# Show instructions
 	show_instructions
