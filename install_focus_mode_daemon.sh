@@ -73,12 +73,21 @@ install_daemon() {
 		exit 1
 	fi
 
-	# Install the daemon script
-	msg "Installing daemon script to $INSTALL_PATH"
+	# Symlink rather than copy. A copy goes stale the instant the repo file is
+	# edited, so the daemon being run silently stops matching the daemon being
+	# read - which is exactly how a fix for phantom Steam detection sat in the
+	# repo while the months-old copy at $INSTALL_PATH went on killing browsers.
+	# A link means editing the repo file IS deploying it.
+	#
+	# The target lives in the user's checkout, so $INSTALL_PATH is only as
+	# trustworthy as that path. That is fine here: focus-mode runs as a systemd
+	# *user* service, so no privilege boundary is crossed.
+	chmod +x "$DAEMON_SCRIPT"
+	msg "Linking $INSTALL_PATH -> $DAEMON_SCRIPT"
 	if [[ $EUID -eq 0 ]]; then
-		install -m 755 "$DAEMON_SCRIPT" "$INSTALL_PATH"
+		ln -sfn "$DAEMON_SCRIPT" "$INSTALL_PATH"
 	else
-		sudo install -m 755 "$DAEMON_SCRIPT" "$INSTALL_PATH"
+		sudo ln -sfn "$DAEMON_SCRIPT" "$INSTALL_PATH"
 	fi
 
 	# Create systemd user directory
@@ -159,8 +168,11 @@ uninstall_daemon() {
 	# Reload daemon
 	systemctl --user daemon-reload 2>/dev/null || true
 
-	# Remove installed script
-	if [[ -f "$INSTALL_PATH" ]]; then
+	# Remove installed script. -L as well as -e: $INSTALL_PATH is a symlink into
+	# the checkout, and -e alone reports false for one whose target is gone -
+	# exactly the case (repo moved or deleted) where the stale link most needs
+	# clearing.
+	if [[ -e "$INSTALL_PATH" || -L "$INSTALL_PATH" ]]; then
 		msg "Removing daemon script..."
 		if [[ $EUID -eq 0 ]]; then
 			rm -f "$INSTALL_PATH"
