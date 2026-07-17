@@ -14,7 +14,9 @@ source "$SCRIPT_DIR/../../lib/common.sh"
 # Schedule constants (single source of truth for this script)
 # These values are written to /etc/shutdown-schedule.conf during setup
 SCHEDULE_MON_WED_HOUR=21
-SCHEDULE_THU_SUN_HOUR=22
+# Thu-Sun aligned to 21:00 to match the canonical schedule that screen_locker's
+# sick-day feature ratcheted in (was 22); the ratchet only permits same/stricter.
+SCHEDULE_THU_SUN_HOUR=21
 SCHEDULE_MORNING_END_HOUR=5
 
 # ============================================================================
@@ -915,7 +917,7 @@ if [[ $day_of_week -ge 1 ]] && [[ $day_of_week -le 3 ]]; then
     shutdown_start=$mon_wed_minutes
     logger -t day-specific-shutdown "Today is $day_name - checking ${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00 window"
 
-    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -le $morning_end_minutes ]]; then
+    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
         should_shutdown=true
         if [[ $current_time_minutes -ge $shutdown_start ]]; then
             logger -t day-specific-shutdown "Time $current_hour:$current_minute is within evening shutdown window (${MON_WED_HOUR}:00-23:59)"
@@ -930,7 +932,7 @@ else
     shutdown_start=$thu_sun_minutes
     logger -t day-specific-shutdown "Today is $day_name - checking ${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00 window"
 
-    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -le $morning_end_minutes ]]; then
+    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
         should_shutdown=true
         if [[ $current_time_minutes -ge $shutdown_start ]]; then
             logger -t day-specific-shutdown "Time $current_hour:$current_minute is within evening shutdown window (${THU_SUN_HOUR}:00-23:59)"
@@ -946,37 +948,18 @@ if [[ $should_shutdown == true ]]; then
     printf '%(%Y-%m-%d %H:%M:%S)T: Executing shutdown - current time %s:%s is within shutdown window for %s\n' -1 "$current_hour" "$current_minute" "$day_name"
     logger -t day-specific-shutdown "Executing scheduled shutdown at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1)"
 
-    # If tomorrow is a wake-alarm day (Mon=1, Fri=5, Sat=6, Sun=7), hibernate
-    # with an RTC timer so the alarm fires 8 hours later. Hibernate is completely
-    # silent and dark — ideal when the PC is in a bedroom. rtcwake -m disk saves
-    # state to swap and powers off, then the RTC restores power at wake_epoch.
-    #
-    # NOTE the -i (--ignore-inhibitors): this is a digital-wellbeing *enforcement*
-    # shutdown and must be unbypassable. Without -i, any process holding a block
-    # inhibitor — a game, Steam, a video player, or our own controller idle-off
-    # watcher — silently denies the hibernate ("Operation denied due to active
-    # block inhibitor") and the PC stays up all night. -i overrides all locks.
-    tomorrow_dow=$(date -d "tomorrow" +%u)
-    case "$tomorrow_dow" in
-        1|5|6|7)
-            wake_epoch=$(( $(printf '%(%s)T' -1) + 8 * 3600 ))
-            logger -t day-specific-shutdown "Tomorrow is alarm day (dow=$tomorrow_dow) — hibernating, RTC wake at epoch $wake_epoch"
-            if [[ "${DRY_RUN:-}" == "1" ]]; then
-                logger -t day-specific-shutdown "DRY_RUN: would run rtcwake -m no -t $wake_epoch then systemctl hibernate -i"
-            else
-                /usr/bin/sudo /usr/sbin/rtcwake -m no -t "$wake_epoch"
-                /usr/bin/systemctl hibernate -i
-            fi
-            ;;
-        *)
-            logger -t day-specific-shutdown "Tomorrow is not an alarm day — powering off normally"
-            if [[ "${DRY_RUN:-}" == "1" ]]; then
-                logger -t day-specific-shutdown "DRY_RUN: would run systemctl poweroff -i"
-            else
-                /usr/bin/systemctl poweroff -i
-            fi
-            ;;
-    esac
+    # Night lockdown instead of power-off. This machine is a 24/7 home server
+    # (Gitea, the Caddy TLS edge, SyncYomi, the personal website, Open WebUI,
+    # Joplin, dufs, ollama, dnsmasq, wg-quick@wg0, nftables, sshd). Powering off
+    # took every server down with it. The lockdown action tears down the user GUI
+    # and masks the TTY login surface so the machine is unusable from the keyboard,
+    # while all servers keep running. See setup_night_lockdown.sh. The morning
+    # unlock (night-lockdown-unlock.timer) restores the desktop at 05:00, so the
+    # old rtcwake/hibernate wake-for-alarm path is no longer needed — the machine
+    # simply stays on all night. DRY_RUN passes through so
+    # `DRY_RUN=1 day-specific-shutdown-check.sh` exercises the path without locking.
+    logger -t day-specific-shutdown "Entering night lockdown (servers stay up) via /usr/local/bin/night-lockdown-enter.sh"
+    DRY_RUN="${DRY_RUN:-}" /usr/local/bin/night-lockdown-enter.sh
 else
     printf '%(%Y-%m-%d %H:%M:%S)T: Skipping shutdown - not within shutdown window for %s (current: %s:%s)\n' -1 "$day_name" "$current_hour" "$current_minute"
     logger -t day-specific-shutdown "Skipped shutdown - not within shutdown window for $day_name (current: $current_hour:$current_minute)"
