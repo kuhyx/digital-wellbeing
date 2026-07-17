@@ -4,6 +4,17 @@
 
 set -euo pipefail
 
+# This script manages a systemd USER unit, so every `systemctl --user` call needs
+# the invoking user's session bus. When run via `sudo -u <user> ...` — which is
+# exactly how check_and_enable_services.sh repairs this service — sudo changes the
+# UID but grants NO session: XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS stay
+# unset and systemctl dies with "Failed to connect to user scope bus via local
+# transport". That killed this installer at its daemon-reload step on every
+# automated run, which is why focus-mode was never actually installed. Derive the
+# session paths from the effective UID when they are not already provided.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_SCRIPT="$SCRIPT_DIR/focus_mode_daemon.py"
 INSTALL_PATH="/usr/local/bin/focus-mode-daemon"

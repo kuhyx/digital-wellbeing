@@ -45,12 +45,38 @@ declare -A APPS=(
 	["discord"]="/usr/bin/discord"
 )
 
+# The wrapper runs as the user ($SUDO_USER unset); the installer runs as root
+# under sudo ($SUDO_USER set) — resolve the same home in both cases.
+_cco_user="${SUDO_USER:-${USER:-$(id -un)}}"
+_cco_home="$(getent passwd "$_cco_user" 2>/dev/null | cut -d: -f6)"
+[[ -n $_cco_home ]] || _cco_home="/home/$_cco_user"
+
 # Actual executable paths (the real binaries to exec after wrapper check)
 # These are where the real code lives
+#
+# discord: the `discord` package ships ONLY /usr/bin/discord — a bootstrap shell
+# script that downloads the app into ~/.config/discord/ and execs
+# ~/.config/discord/Discord (a symlink to the current app-<version>/Discord that
+# Discord's own updater maintains). /opt/discord/Discord belongs to a DIFFERENT
+# discord package and does not exist here, so the old value made install_wrapper's
+# `[[ -x $real_binary ]]` gate fail forever ("discord real binary not found") and
+# discord was never limited. We exec the preserved LAUNCHER (.orig) rather than
+# the app directly, so Discord's bootstrap/self-update still runs — pointing
+# straight at ~/.config/discord/Discord would break launching whenever the
+# updater moved that symlink.
 declare -A REAL_BINARIES=(
 	["beeper"]="/opt/beeper/beepertexts"
 	["signal-desktop"]="/usr/lib/signal-desktop/signal-desktop"
-	["discord"]="/opt/discord/Discord"
+	["discord"]="/usr/bin/discord.orig"
+)
+
+# Pattern for detecting a RUNNING instance (pgrep -f). Defaults to the exec
+# target, which is right when that target is the app itself. It is wrong when the
+# exec target is a launcher that exec()s away: /usr/bin/discord.orig replaces
+# itself with ~/.config/discord/<app>/Discord, so nothing would ever match
+# ".orig" and the running-state tracking would look stale immediately.
+declare -A PROCESS_MATCH=(
+	["discord"]="$_cco_home/.config/discord/"
 )
 
 # Ensure state directory exists
@@ -152,7 +178,9 @@ cleanup_stale_running_state() {
 		return 0
 	fi
 
-	local real_binary="${REAL_BINARIES[$app]}"
+	# Match on PROCESS_MATCH when the exec target is a launcher that exec()s away
+	# (see the PROCESS_MATCH map); otherwise the exec target is the process.
+	local real_binary="${PROCESS_MATCH[$app]:-${REAL_BINARIES[$app]}}"
 
 	# Check if any process matching the real binary is still running
 	if ! is_app_running "$real_binary"; then
@@ -201,6 +229,14 @@ launch_with_timer() {
 	local real_binary="$2"
 	shift 2
 
+	# $real_binary is what we EXEC; $proc_match is what we look for in the process
+	# table. They are usually identical, but NOT when the exec target is a launcher
+	# that exec()s away: discord's /usr/bin/discord.orig replaces itself with
+	# ~/.config/discord/<app>/Discord, so matching/killing on the launcher path
+	# would find nothing — the auto-close daemon would think the app exited
+	# instantly and the time limit would silently never fire.
+	local proc_match="${PROCESS_MATCH[$app]:-$real_binary}"
+
 	# Check if auto-close is suspended for today
 	if is_autoclose_suspended "$app"; then
 		log_message "LAUNCHED: $app (auto-close suspended for today)"
@@ -234,7 +270,7 @@ launch_with_timer() {
 		sleep "$warning_seconds"
 
 		# Check if still running before warning (by process name, not PID)
-		if is_app_running "$real_binary"; then
+		if is_app_running "$proc_match"; then
 			# Send warning notification
 			notify-send -u critical -t 30000 "⏰ $app Closing Soon" \
 				"Session will end in ${AUTO_CLOSE_WARNING_MINUTES} minutes. Save your work!" 2>/dev/null || true
@@ -248,13 +284,13 @@ launch_with_timer() {
 		sleep $((AUTO_CLOSE_WARNING_MINUTES * 60))
 
 		# Check if still running (by process name)
-		if is_app_running "$real_binary"; then
+		if is_app_running "$proc_match"; then
 			# Send final notification
 			notify-send -u critical -t 5000 "🚫 $app Session Ended" \
 				"Time's up! Closing $app now." 2>/dev/null || true
 
 			# Kill all matching processes (handles forked Electron children)
-			kill_app "$real_binary"
+			kill_app "$proc_match"
 
 			printf '%(%Y-%m-%d %H:%M:%S)T - AUTO-CLOSED: %s after %dm\n' -1 "$app" "${timeout_minutes}" >>"$LOG_FILE" 2>/dev/null || true
 		fi
@@ -265,7 +301,7 @@ launch_with_timer() {
 
 	# Wait for the app to exit by polling process name.
 	# Electron apps fork immediately so waiting on $app_pid would return too soon.
-	while is_app_running "$real_binary"; do
+	while is_app_running "$proc_match"; do
 		sleep 5
 	done
 
@@ -328,8 +364,13 @@ install_wrapper() {
 		return 1
 	fi
 
-	# Check if real binary exists
-	if [[ ! -x $real_binary ]]; then
+	# Check if real binary exists.
+	# Special case: when the exec target IS this wrapper's own backup
+	# ("${wrapper_path}.orig") the app has no separate system binary — the
+	# launcher itself is the real thing, and the wrap below CREATES the .orig by
+	# moving it aside. Requiring it to exist beforehand is a chicken-and-egg that
+	# could never pass. The wrapper_path check above already proved it installed.
+	if [[ $real_binary != "${wrapper_path}.orig" && ! -x $real_binary ]]; then
 		echo "  ⚠ $app real binary not found ($real_binary)"
 		return 1
 	fi
