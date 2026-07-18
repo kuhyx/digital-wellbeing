@@ -186,6 +186,7 @@ ALSA_CARDS="${ALSA_CARDS:-}"
 RGB_ENABLE="${RGB_ENABLE:-1}"
 MONITORED_USER_UNITS="${MONITORED_USER_UNITS:-}"
 MONITORED_PROCS="${MONITORED_PROCS:-}"
+MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
 CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
 CONSOLE_BLANK_MODE="${CONSOLE_BLANK_MODE:-1}"
 DRY_RUN="${DRY_RUN:-}"
@@ -303,7 +304,27 @@ done
 #    (05:00 timer, dead-man, or manual) then correctly restores.
 if [[ "$DRY_RUN" != "1" ]]; then
 	echo LOCKED >"$STATE_FILE"
-	date +%s >"$STATE_DIR/locked_at_epoch"
+	lockdown_epoch="$(date +%s)"
+	echo "$lockdown_epoch" >"$STATE_DIR/locked_at_epoch"
+
+	# 5a. Schedule a one-shot wake-floor trigger for exactly
+	#     lockdown_epoch + MIN_WAKE_AFTER_LOCKDOWN_HOURS. The staggered
+	#     05:00/05:15/05:30/06:00/07:00 unlock triggers are a fixed list sized
+	#     for the usual shutdown hours (~21:00-23:00), but the shutdown hour
+	#     itself is configurable (/etc/shutdown-schedule.conf) and changes
+	#     dynamically (see the sick-day feature). If lockdown ever starts late
+	#     enough that the floor lands after every remaining fixed trigger, the
+	#     alarm would otherwise silently never fire that morning. This
+	#     transient timer fires at the exact floor moment for THIS lockdown
+	#     regardless of what time it actually started, re-running the
+	#     (idempotent, self-dedup'd) unlock script, which is where the alarm
+	#     is actually attempted.
+	floor_epoch=$((lockdown_epoch + MIN_WAKE_AFTER_LOCKDOWN_HOURS * 3600))
+	floor_cal="$(date -d "@$floor_epoch" '+%Y-%m-%d %H:%M:%S')"
+	run systemd-run --unit=night-lockdown-wake-floor --collect \
+		--on-calendar="$floor_cal" /usr/local/bin/night-lockdown-unlock.sh
+else
+	logg "DRY_RUN: would schedule a one-shot wake-floor trigger ~${MIN_WAKE_AFTER_LOCKDOWN_HOURS}h from now"
 fi
 
 # 6a. Silence the console BEFORE stopping the GUI, so the teardown itself
