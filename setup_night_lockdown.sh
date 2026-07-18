@@ -129,6 +129,18 @@ CONSOLE_BLANK_MODE="1"
 ALARM_DAYS_DOW="1 5 6 7"
 # User systemd unit that runs the morning routine (wake alarm + workout lock).
 MORNING_ROUTINE_UNIT="morning-routine.service"
+
+# Never start the morning alarm earlier than lockdown-entry + this many hours,
+# even though the unlock timer itself still fires on its normal staggered
+# schedule (05:00/05:15/05:30/06:00/07:00). A late lockdown entry (e.g. 23:00
+# instead of the usual 21:00) must not still wake you 6h later.
+MIN_WAKE_AFTER_LOCKDOWN_HOURS="8"
+
+# autorandr profile to restore after the GUI comes back up. Create it once with
+# 'autorandr --save default' while all monitors are connected and arranged the
+# way you want; the unlock script re-applies it so a DisplayPort link that
+# didn't re-enumerate cleanly doesn't require a manual xrandr/replug.
+AUTORANDR_PROFILE="default"
 EOF
 	chmod 0644 "$CONF_FILE"
 
@@ -179,6 +191,14 @@ CONSOLE_BLANK_MODE="${CONSOLE_BLANK_MODE:-1}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
+
+if [[ "$DRY_RUN" == "1" ]]; then
+	logg "DRY_RUN NOTE: log-only — lightdm is never actually stopped and the"
+	logg "DRY_RUN NOTE: console framebuffer is never actually touched. This CANNOT"
+	logg "DRY_RUN NOTE: exercise the blank-vs-VT-switch timing race (bug: visible"
+	logg "DRY_RUN NOTE: console text). A clean DRY_RUN run is NOT proof that fix"
+	logg "DRY_RUN NOTE: works — only a real run (DRY_RUN unset) validates it."
+fi
 
 # Run a command best-effort: log-only under DRY_RUN, never abort the lockdown.
 run() {
@@ -283,6 +303,7 @@ done
 #    (05:00 timer, dead-man, or manual) then correctly restores.
 if [[ "$DRY_RUN" != "1" ]]; then
 	echo LOCKED >"$STATE_FILE"
+	date +%s >"$STATE_DIR/locked_at_epoch"
 fi
 
 # 6a. Silence the console BEFORE stopping the GUI, so the teardown itself
@@ -300,10 +321,30 @@ silence_console
 run systemctl mask getty@.service
 run systemctl stop 'getty@*.service'
 
-# 7. Stop the GUI. This hands the VT back to fbcon, which unblanks it.
+# 7. Stop the GUI while continuously re-blanking the console in the
+#    background. Activating a VT (which happens somewhere mid-way through the
+#    GUI stop, not only once "systemctl stop" fully returns) makes fbcon
+#    redraw/unblank as part of the switch, so a single blank-after-the-fact
+#    call leaves a gap showing whatever was last on the console (old
+#    kernel/systemd text) for however long the rest of the stop sequence
+#    takes. Keep forcing it dark for the whole teardown instead of waiting.
+if [[ "$DRY_RUN" != "1" ]]; then
+	(
+		while :; do
+			blank_console
+			sleep 0.1
+		done
+	) &
+	BLANK_POLLER_PID=$!
+fi
 run systemctl stop lightdm.service
+if [[ -n "${BLANK_POLLER_PID:-}" ]]; then
+	kill "$BLANK_POLLER_PID" 2>/dev/null || true
+	wait "$BLANK_POLLER_PID" 2>/dev/null || true
+	unset BLANK_POLLER_PID
+fi
 
-# 8. Now that fbcon owns the VT again, force it dark (DPMS off -> standby).
+# 8. Final guaranteed blank now that the GUI is fully down.
 blank_console
 
 logg "night lockdown active — servers up, GUI down, login surface masked, console dark"
@@ -337,6 +378,8 @@ LOCK_USER="${LOCK_USER:-}"
 LOCK_UID="${LOCK_UID:-}"
 ALARM_DAYS_DOW="${ALARM_DAYS_DOW:-}"
 MORNING_ROUTINE_UNIT="${MORNING_ROUTINE_UNIT:-}"
+MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
+AUTORANDR_PROFILE="${AUTORANDR_PROFILE:-default}"
 CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
 RGB_ENABLE="${RGB_ENABLE:-1}"
 RGB_OFF_MODE="${RGB_OFF_MODE:-static}"
@@ -345,6 +388,16 @@ RGB_HOME="${RGB_HOME:-/root}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
+
+if [[ "$DRY_RUN" == "1" ]]; then
+	logg "DRY_RUN NOTE: log-only — lightdm is never actually started and"
+	logg "DRY_RUN NOTE: autorandr is never actually invoked. This CANNOT exercise"
+	logg "DRY_RUN NOTE: the real DisplayPort reconnect or graphical-session wait."
+	logg "DRY_RUN NOTE: A clean DRY_RUN run is NOT proof those work — only a real"
+	logg "DRY_RUN NOTE: run (DRY_RUN unset) validates them. The alarm floor/dedup"
+	logg "DRY_RUN NOTE: logic (locked_at_epoch, alarm_started_date) IS exercised"
+	logg "DRY_RUN NOTE: faithfully here, since that part is pure calculation."
+fi
 
 run() {
 	if [[ "$DRY_RUN" == "1" ]]; then
@@ -358,17 +411,37 @@ run() {
 
 # Fire the morning wake alarm on alarm days. The always-on lockdown removed the
 # hibernate/resume event that used to start morning-routine.service, so we start
-# it here once the desktop session is back. Only runs when we actually unlocked
-# from a real lockdown (this function is reached only past the idempotency gate).
+# it here once the desktop session is back. Called on every staggered trigger
+# (not just the one that performs the console/GUI restore), because
+# MIN_WAKE_AFTER_LOCKDOWN_HOURS below may push the actual alarm start past the
+# trigger that unlocked the screen — dedup is its own alarm_started_date marker,
+# independent of the LOCKED/UNLOCKED state file.
 maybe_start_morning_alarm() {
 	[[ -n "$LOCK_USER" && -n "$LOCK_UID" && -n "$MORNING_ROUTINE_UNIT" ]] || return 0
-	local dow today_is_alarm_day=false d
+	local dow today_is_alarm_day=false d today
 	dow="$(date +%u)" # 1=Mon .. 7=Sun
 	for d in $ALARM_DAYS_DOW; do
 		[[ "$d" == "$dow" ]] && today_is_alarm_day=true
 	done
 	if [[ "$today_is_alarm_day" != true ]]; then
 		logg "not an alarm day (dow=$dow) — skipping morning alarm"
+		return 0
+	fi
+	today="$(date +%F)"
+	if [[ "$(cat "$STATE_DIR/alarm_started_date" 2>/dev/null || echo '')" == "$today" ]]; then
+		logg "morning alarm already started today — skipping"
+		return 0
+	fi
+	# Never wake earlier than lockdown-entry + MIN_WAKE_AFTER_LOCKDOWN_HOURS. A
+	# late lockdown entry (e.g. 23:00 instead of the usual 21:00) must not still
+	# fire the alarm at the normal 05:00 trigger; wait for a later staggered
+	# trigger (05:15/05:30/06:00/07:00) that clears the floor instead.
+	local locked_at now min_wake
+	locked_at="$(cat "$STATE_DIR/locked_at_epoch" 2>/dev/null || echo 0)"
+	now="$(date +%s)"
+	min_wake=$((locked_at + MIN_WAKE_AFTER_LOCKDOWN_HOURS * 3600))
+	if ((locked_at > 0 && now < min_wake)); then
+		logg "too soon since lockdown entry ($(( (min_wake - now) / 60 ))m remaining) — skipping alarm this trigger"
 		return 0
 	fi
 	if [[ "$DRY_RUN" == "1" ]]; then
@@ -387,13 +460,17 @@ maybe_start_morning_alarm() {
 	logg "alarm day (dow=$dow) — starting $MORNING_ROUTINE_UNIT"
 	run sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" \
 		systemctl --user start --no-block "$MORNING_ROUTINE_UNIT"
+	echo "$today" >"$STATE_DIR/alarm_started_date"
 }
 
 mkdir -p "$STATE_DIR"
 
-# Idempotency — lifting when already unlocked is a safe no-op.
+# Idempotency — lifting when already unlocked is a safe no-op for the
+# console/GUI restore, but a still-pending morning alarm (delayed past this
+# trigger by MIN_WAKE_AFTER_LOCKDOWN_HOURS) gets one more chance to fire.
 if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "UNLOCKED" ]]; then
-	logg "already UNLOCKED — nothing to do"
+	maybe_start_morning_alarm
+	logg "already UNLOCKED — nothing else to do"
 	exit 0
 fi
 
@@ -432,6 +509,32 @@ run systemctl unmask getty@.service
 
 # 2. Start the GUI — lightdm autologins back into i3/dwm.
 run systemctl start lightdm.service
+
+# 2a. Reconnect/reconfigure displays. A DisplayPort link does not always
+#     re-enumerate cleanly on its own after the console teardown, leaving a
+#     monitor disconnected until someone runs xrandr by hand. Retry autorandr
+#     for a bit while the session comes up instead. Requires a saved profile
+#     ('autorandr --save default' run once while all monitors are connected).
+if [[ -n "$LOCK_USER" && -n "$LOCK_UID" ]] && command -v autorandr >/dev/null 2>&1; then
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would run autorandr --change as $LOCK_USER"
+	else
+		autorandr_ok=false
+		for ((i = 0; i < 15; i++)); do
+			if sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" DISPLAY=:0 \
+				autorandr --change --default "$AUTORANDR_PROFILE" >/dev/null 2>&1; then
+				autorandr_ok=true
+				break
+			fi
+			sleep 1
+		done
+		if [[ "$autorandr_ok" == true ]]; then
+			logg "autorandr: displays restored (profile '$AUTORANDR_PROFILE')"
+		else
+			logg "WARN: autorandr did not settle after retries — displays may need manual xrandr"
+		fi
+	fi
+fi
 
 # 3. Restore audio (unmute the cards muted at lockdown).
 for card in $ALSA_CARDS; do
