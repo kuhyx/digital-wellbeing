@@ -78,13 +78,13 @@ echo "PASS: shell syntax is valid"
 assert_not_regex "$PRE_HOOK_FILE" '(^|[[:space:]])(sudo[[:space:]]+)?rm[[:space:]]+/etc/hosts([[:space:]]|$)' \
 	"pre-transaction hook must not delete /etc/hosts"
 
-assert_contains "$WRAPPER_FILE" 'pacman_hooks_manage_hosts_guard()' \
+assert_contains "$WRAPPER_FILE" 'pacman_hooks_manage_guard_lib()' \
 	"wrapper detects when pacman hooks already manage hosts guard"
-assert_contains "$WRAPPER_FILE" 'should_use_wrapper_hosts_guard_fallback()' \
+assert_contains "$WRAPPER_FILE" 'should_use_wrapper_guard_lib_fallback()' \
 	"wrapper exposes a dedicated fallback path for hosts guard"
-assert_order "$WRAPPER_FILE" 'if ! check_and_handle_db_lock "$@"; then' 'if should_use_wrapper_hosts_guard_fallback "$@"; then' \
+assert_order "$WRAPPER_FILE" 'if ! check_and_handle_db_lock "$@"; then' 'if should_use_wrapper_guard_lib_fallback "$@"; then' \
 	"wrapper checks pacman db lock before any manual hosts unlock fallback"
-assert_contains "$WRAPPER_FILE" 'manual_hosts_guard=1' \
+assert_contains "$WRAPPER_FILE" 'manual_guard_lib_fallback=1' \
 	"wrapper tracks whether manual hosts guard fallback was used"
 
 assert_contains "$INSTALLER_FILE" 'install -m 755 "$SCRIPT_DIR/pacman-hooks/hosts-guard-common.sh" /usr/local/share/hosts-guard/' \
