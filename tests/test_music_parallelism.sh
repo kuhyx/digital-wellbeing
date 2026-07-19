@@ -29,11 +29,40 @@ trap cleanup EXIT
 
 WORKTREE="$TMP_DIR/worktree"
 BIN_DIR="$TMP_DIR/bin"
-mkdir -p "$WORKTREE/scripts/periodic_background/digital_wellbeing" "$WORKTREE/scripts/lib" "$BIN_DIR"
-cp "$TARGET_SCRIPT" "$WORKTREE/scripts/periodic_background/digital_wellbeing/music_parallelism.sh"
 
-cat >"$WORKTREE/scripts/lib/common.sh" <<'EOF'
+# Mirror the script's real position inside the worktree instead of hardcoding
+# it. music_parallelism.sh sources its library as $SCRIPT_DIR/../../lib/common.sh,
+# so the copy must sit at the same depth below the repo root or that path
+# resolves outside the worktree. When it did, the script silently fell back to
+# the real /usr/local/lib/common.sh and the stub below was never used — the
+# tests then measured the live system and failed as if the daemon were wrong.
+# Deriving the path keeps this correct across future reorganisations.
+TARGET_REL="${TARGET_SCRIPT#"$REPO_DIR"/}"
+if [[ "$TARGET_REL" == "$TARGET_SCRIPT" ]]; then
+  fail "TARGET_SCRIPT ($TARGET_SCRIPT) is not below REPO_DIR ($REPO_DIR)"
+fi
+WORKTREE_SCRIPT="$WORKTREE/$TARGET_REL"
+# The library lives at <repo>/scripts/lib/common.sh; keep it relative to the
+# same root rather than assuming how deep the script itself is nested.
+WORKTREE_LIB="$WORKTREE/scripts/lib/common.sh"
+
+mkdir -p "$(dirname "$WORKTREE_SCRIPT")" "$(dirname "$WORKTREE_LIB")" "$BIN_DIR"
+cp "$TARGET_SCRIPT" "$WORKTREE_SCRIPT"
+
+# Fail loudly if the copy cannot reach the stub, rather than letting the script
+# fall through to the real library and produce a misleading behavioural failure.
+STUB_FROM_SCRIPT="$(dirname "$WORKTREE_SCRIPT")/../../lib/common.sh"
+if [[ "$(realpath -m "$STUB_FROM_SCRIPT")" != "$(realpath -m "$WORKTREE_LIB")" ]]; then
+  fail "worktree layout drift: script at $WORKTREE_SCRIPT resolves ../../lib/common.sh to $(realpath -m "$STUB_FROM_SCRIPT"), not the stub at $WORKTREE_LIB"
+fi
+
+cat >"$WORKTREE_LIB" <<'EOF'
 #!/bin/bash
+
+# Records that the stub — not the real installed common.sh — was sourced.
+if [[ -n ${MUSIC_PARALLELISM_STUB_MARKER:-} ]]; then
+  printf 'sourced\n' >"$MUSIC_PARALLELISM_STUB_MARKER"
+fi
 
 FOCUS_APPS_WINDOWS=("Mock Focus App")
 FOCUS_APPS_PROCESSES=("mock-focus-proc")
@@ -55,7 +84,7 @@ log_message() {
   :
 }
 EOF
-chmod +x "$WORKTREE/scripts/lib/common.sh"
+chmod +x "$WORKTREE_LIB"
 
 create_fake_proc_process() {
   local proc_root="$1"
@@ -72,8 +101,10 @@ run_case() {
   local mode="${4:-instant}"
   local wait_log="$TMP_DIR/wait.log"
   local proc_root="$TMP_DIR/proc"
+  local stub_marker="$TMP_DIR/stub.marker"
 
   : >"$wait_log"
+  rm -f "$stub_marker"
   rm -rf "$proc_root"
   mkdir -p "$proc_root"
 
@@ -84,11 +115,17 @@ run_case() {
   PATH="$BIN_DIR:$PATH" \
     MUSIC_PARALLELISM_TEST_WAIT_LOG="$wait_log" \
     MUSIC_PARALLELISM_TEST_EXIT_AFTER_WAIT=1 \
+    MUSIC_PARALLELISM_STUB_MARKER="$stub_marker" \
     XDOTOOL_LOG="${XDOTOOL_LOG:-}" \
     PROC_ROOT="$proc_root" \
     MOCK_FOCUS_ACTIVE="$focus_active" \
-    bash "$WORKTREE/scripts/periodic_background/digital_wellbeing/music_parallelism.sh" "$mode" \
+    bash "$WORKTREE_SCRIPT" "$mode" \
     >/dev/null 2>&1 || true
+
+  # Without this the script can source the real /usr/local/lib/common.sh and
+  # still "pass" or fail for reasons that have nothing to do with the daemon.
+  [[ -f "$stub_marker" ]] \
+    || fail 'stubbed common.sh was not sourced — the script used a different library, so this run measured the live system rather than the mock'
 
   assert_equals "$expected_wait" "$(<"$wait_log")" "music_parallelism.sh should pick the expected wait interval"
 }

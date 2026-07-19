@@ -6,10 +6,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 WRAPPER_FILE="$REPO_DIR/scripts/periodic_background/digital_wellbeing/pacman/pacman_wrapper.sh"
-PRE_HOOK_FILE="$REPO_DIR/hosts/guard/pacman-hooks/pacman-pre-unlock-hosts.sh"
-POST_HOOK_FILE="$REPO_DIR/hosts/guard/pacman-hooks/pacman-post-relock-hosts.sh"
-COMMON_FILE="$REPO_DIR/hosts/guard/pacman-hooks/hosts-guard-common.sh"
-INSTALLER_FILE="$REPO_DIR/hosts/guard/install_pacman_hooks.sh"
+PRE_HOOK_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/pacman-pre-unlock-hosts.sh"
+POST_HOOK_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/pacman-post-relock-hosts.sh"
+COMMON_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/hosts-guard-common.sh"
+INSTALLER_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/install_pacman_hooks.sh"
 
 assert_contains() {
 	local file_path="$1"
