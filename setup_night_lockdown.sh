@@ -122,14 +122,6 @@ CONSOLE_TTY="/dev/tty1"
 # whole point, without touching the link.
 CONSOLE_BLANK_MODE="1"
 
-# Morning wake alarm. The always-on lockdown removes the hibernate/resume event
-# that used to start the alarm, so the unlock re-fires it on alarm days. Days are
-# date(1) %u values: 1=Mon .. 7=Sun. Mon/Fri/Sat/Sun matches screen_locker's
-# ALARM_DAYS. The alarm's own gate fires every day, so the day-gate lives here.
-ALARM_DAYS_DOW="1 5 6 7"
-# User systemd unit that runs the morning routine (wake alarm + workout lock).
-MORNING_ROUTINE_UNIT="morning-routine.service"
-
 # Never start the morning alarm earlier than lockdown-entry + this many hours,
 # even though the unlock timer itself still fires on its normal staggered
 # schedule (05:00/05:15/05:30/06:00/07:00). A late lockdown entry (e.g. 23:00
@@ -397,8 +389,6 @@ readonly STATE_FILE="$STATE_DIR/state"
 ALSA_CARDS="${ALSA_CARDS:-}"
 LOCK_USER="${LOCK_USER:-}"
 LOCK_UID="${LOCK_UID:-}"
-ALARM_DAYS_DOW="${ALARM_DAYS_DOW:-}"
-MORNING_ROUTINE_UNIT="${MORNING_ROUTINE_UNIT:-}"
 MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
 AUTORANDR_PROFILE="${AUTORANDR_PROFILE:-default}"
 CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
@@ -416,7 +406,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 	logg "DRY_RUN NOTE: the real DisplayPort reconnect or graphical-session wait."
 	logg "DRY_RUN NOTE: A clean DRY_RUN run is NOT proof those work — only a real"
 	logg "DRY_RUN NOTE: run (DRY_RUN unset) validates them. The alarm floor/dedup"
-	logg "DRY_RUN NOTE: logic (locked_at_epoch, alarm_started_date) IS exercised"
+	logg "DRY_RUN NOTE: logic (locked_at_epoch) IS exercised"
 	logg "DRY_RUN NOTE: faithfully here, since that part is pure calculation."
 fi
 
@@ -430,67 +420,16 @@ run() {
 	fi
 }
 
-# Fire the morning wake alarm on alarm days. The always-on lockdown removed the
-# hibernate/resume event that used to start morning-routine.service, so we start
-# it here once the desktop session is back. Called on every staggered trigger
-# (not just the one that performs the console/GUI restore), because
-# MIN_WAKE_AFTER_LOCKDOWN_HOURS below may push the actual alarm start past the
-# trigger that unlocked the screen — dedup is its own alarm_started_date marker,
-# independent of the LOCKED/UNLOCKED state file.
-maybe_start_morning_alarm() {
-	[[ -n "$LOCK_USER" && -n "$LOCK_UID" && -n "$MORNING_ROUTINE_UNIT" ]] || return 0
-	local dow today_is_alarm_day=false d today
-	dow="$(date +%u)" # 1=Mon .. 7=Sun
-	for d in $ALARM_DAYS_DOW; do
-		[[ "$d" == "$dow" ]] && today_is_alarm_day=true
-	done
-	if [[ "$today_is_alarm_day" != true ]]; then
-		logg "not an alarm day (dow=$dow) — skipping morning alarm"
-		return 0
-	fi
-	today="$(date +%F)"
-	if [[ "$(cat "$STATE_DIR/alarm_started_date" 2>/dev/null || echo '')" == "$today" ]]; then
-		logg "morning alarm already started today — skipping"
-		return 0
-	fi
-	# Never wake earlier than lockdown-entry + MIN_WAKE_AFTER_LOCKDOWN_HOURS. A
-	# late lockdown entry (e.g. 23:00 instead of the usual 21:00) must not still
-	# fire the alarm at the normal 05:00 trigger; wait for a later staggered
-	# trigger (05:15/05:30/06:00/07:00) that clears the floor instead.
-	local locked_at now min_wake
-	locked_at="$(cat "$STATE_DIR/locked_at_epoch" 2>/dev/null || echo 0)"
-	now="$(date +%s)"
-	min_wake=$((locked_at + MIN_WAKE_AFTER_LOCKDOWN_HOURS * 3600))
-	if ((locked_at > 0 && now < min_wake)); then
-		logg "too soon since lockdown entry ($(( (min_wake - now) / 60 ))m remaining) — skipping alarm this trigger"
-		return 0
-	fi
-	if [[ "$DRY_RUN" == "1" ]]; then
-		logg "DRY_RUN: would wait for graphical session then start $MORNING_ROUTINE_UNIT"
-		return 0
-	fi
-	# Bounded wait (≤60s) for the user graphical session to come up after lightdm.
-	local i
-	for ((i = 0; i < 60; i++)); do
-		if sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" \
-			systemctl --user is-active graphical-session.target >/dev/null 2>&1; then
-			break
-		fi
-		sleep 1
-	done
-	logg "alarm day (dow=$dow) — starting $MORNING_ROUTINE_UNIT"
-	run sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" \
-		systemctl --user start --no-block "$MORNING_ROUTINE_UNIT"
-	echo "$today" >"$STATE_DIR/alarm_started_date"
-}
+# NOTE: this script used to also start morning-routine.service here, on a
+# fixed 05:00/05:15/05:30/06:00/07:00 ladder. wake-alarm-trigger.timer now
+# owns firing the alarm: it ticks every minute and fires at the time the
+# phone synced, so the alarm follows the phone instead of a hardcoded hour.
+# Keeping both meant a 07:00 alarm on a morning the phone said 08:00.
 
 mkdir -p "$STATE_DIR"
 
-# Idempotency — lifting when already unlocked is a safe no-op for the
-# console/GUI restore, but a still-pending morning alarm (delayed past this
-# trigger by MIN_WAKE_AFTER_LOCKDOWN_HOURS) gets one more chance to fire.
+# Idempotency — lifting when already unlocked is a safe no-op.
 if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "UNLOCKED" ]]; then
-	maybe_start_morning_alarm
 	logg "already UNLOCKED — nothing else to do"
 	exit 0
 fi
@@ -573,10 +512,6 @@ fi
 if [[ "$DRY_RUN" != "1" ]]; then
 	echo UNLOCKED >"$STATE_FILE"
 fi
-
-# 6. On alarm days, re-fire the morning wake alarm the always-on lockdown
-#    displaced (it used to start on the hibernate/resume event we removed).
-maybe_start_morning_alarm
 
 logg "night lockdown lifted — GUI restored, login surface unmasked"
 UNLOCK_EOF
