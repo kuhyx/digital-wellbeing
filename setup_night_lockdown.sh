@@ -133,6 +133,34 @@ MIN_WAKE_AFTER_LOCKDOWN_HOURS="8"
 # way you want; the unlock script re-applies it so a DisplayPort link that
 # didn't re-enumerate cleanly doesn't require a manual xrandr/replug.
 AUTORANDR_PROFILE="default"
+
+# Cap CPU/GPU power draw for the night as a safety net against anything left
+# running headless overnight (interactive GPU/CPU load dies with the GUI
+# teardown above, but a systemd service — e.g. ollama serving a request — does
+# not). Set to "0" to disable without touching the enter/unlock scripts.
+POWER_SAVE_ENABLE="1"
+
+# AMD amd-pstate-epp hint applied to every core at lockdown (this machine is
+# Ryzen, not Intel, so intel_pstate/no_turbo does not apply). One of: default,
+# performance, balance_performance, balance_power, power, custom.
+CPU_EPP_NIGHT="power"
+
+# nvidia-smi power limit (watts) applied at lockdown. Set to this card's
+# reported power.min_limit (100W on the RTX 3090 here) so a runaway overnight
+# CUDA job is bounded, not eliminated — persistence mode is deliberately left
+# alone so any legitimate headless GPU service keeps working, just slower.
+GPU_POWER_LIMIT_NIGHT_WATTS="100"
+
+# Fully unbind the GPU from the PCI bus at lockdown (unload nvidia kernel
+# modules + PCI remove), rescanned back at unlock. Far more aggressive than
+# the power-limit cap above: recovers more idle wattage, but modprobe -r can
+# hang if anything still references the device, and a botched unbind might
+# need a hard power-cycle to recover -- which WOULD take every container down
+# with it (the one thing night-lockdown exists to prevent). Default OFF and
+# deliberately left off: the first real run of this is an uncorroborated test
+# on this exact kernel/driver, not a dress rehearsal -- nothing can safely
+# test it without also tearing down the GUI it runs under.
+GPU_UNBIND_ENABLE="0"
 EOF
 	chmod 0644 "$CONF_FILE"
 
@@ -181,6 +209,10 @@ MONITORED_PROCS="${MONITORED_PROCS:-}"
 MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
 CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
 CONSOLE_BLANK_MODE="${CONSOLE_BLANK_MODE:-1}"
+POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
+CPU_EPP_NIGHT="${CPU_EPP_NIGHT:-power}"
+GPU_POWER_LIMIT_NIGHT_WATTS="${GPU_POWER_LIMIT_NIGHT_WATTS:-100}"
+GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
@@ -191,6 +223,10 @@ if [[ "$DRY_RUN" == "1" ]]; then
 	logg "DRY_RUN NOTE: exercise the blank-vs-VT-switch timing race (bug: visible"
 	logg "DRY_RUN NOTE: console text). A clean DRY_RUN run is NOT proof that fix"
 	logg "DRY_RUN NOTE: works — only a real run (DRY_RUN unset) validates it."
+	logg "DRY_RUN NOTE: The CPU EPP write, nvidia-smi power-limit cap, and (if"
+	logg "DRY_RUN NOTE: enabled) GPU PCI-unbind are also never actually applied"
+	logg "DRY_RUN NOTE: under DRY_RUN — real-hardware timing/driver behavior for"
+	logg "DRY_RUN NOTE: those is unverified until a real run."
 fi
 
 # Run a command best-effort: log-only under DRY_RUN, never abort the lockdown.
@@ -267,6 +303,45 @@ logg "entering night lockdown"
 #    openrgb 1.0rc3 from extra, whose CLI detects properly (~1.9s) before acting.
 if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
 	run env HOME="$RGB_HOME" openrgb --mode "$RGB_OFF_MODE" --color "$RGB_OFF_COLOR"
+fi
+
+# 2b. Cap CPU/GPU power draw for the night. Save the pre-lockdown values first
+#     so unlock restores exactly what was there, not a hardcoded "default" —
+#     the user may have changed either away from factory settings.
+#     Capture is guarded on the .prev file NOT already existing: this step
+#     runs before state is written LOCKED (step 5), so a kill between here and
+#     there leaves state UNLOCKED and the 30-min curfew check re-invokes this
+#     whole script. Without the guard, that re-run would recapture "prev" from
+#     the already-applied NIGHT value, permanently stranding the machine in
+#     night power-save mode. unlock deletes the .prev file after a successful
+#     restore, so a normal (non-crashed) cycle still captures fresh each night.
+if [[ "$POWER_SAVE_ENABLE" == "1" ]]; then
+	if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference ]]; then
+		if [[ "$DRY_RUN" != "1" && ! -f "$STATE_DIR/cpu_epp.prev" ]]; then
+			cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference \
+				>"$STATE_DIR/cpu_epp.prev" 2>/dev/null || true
+		fi
+		for epp_file in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+			[[ -e "$epp_file" ]] || continue
+			if [[ "$DRY_RUN" == "1" ]]; then
+				logg "DRY_RUN: would write $CPU_EPP_NIGHT > $epp_file"
+			else
+				echo "$CPU_EPP_NIGHT" >"$epp_file" 2>/dev/null || logg "WARN: could not set EPP on $epp_file"
+			fi
+		done
+	fi
+
+	if command -v nvidia-smi >/dev/null 2>&1; then
+		if [[ "$DRY_RUN" != "1" && ! -f "$STATE_DIR/gpu_power_limit_watts.prev" ]]; then
+			nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits \
+				>"$STATE_DIR/gpu_power_limit_watts.prev" 2>/dev/null || true
+		fi
+		if [[ "$DRY_RUN" == "1" ]]; then
+			logg "DRY_RUN: would run: timeout 10 nvidia-smi -pl $GPU_POWER_LIMIT_NIGHT_WATTS"
+		else
+			run timeout 10 nvidia-smi -pl "$GPU_POWER_LIMIT_NIGHT_WATTS"
+		fi
+	fi
 fi
 
 # 3. Mute audio (best-effort). The session teardown below silences apps anyway;
@@ -360,6 +435,34 @@ fi
 # 8. Final guaranteed blank now that the GUI is fully down.
 blank_console
 
+# 9. Optionally unbind the GPU entirely (default OFF — see GPU_UNBIND_ENABLE
+#    comment in night-lockdown.conf for the risk tradeoff). Only ever runs
+#    after the GUI is torn down, since nothing interactive needs the GPU at
+#    this point. Timeout-guarded: modprobe -r can hang if anything still
+#    references the device, and a hang here must not block the rest of
+#    lockdown.
+if [[ "$GPU_UNBIND_ENABLE" == "1" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+	gpu_pci="$(lspci -d 10de: 2>/dev/null | grep -i 'VGA\|3D' | awk '{print $1}' | head -1)"
+	if [[ -z "$gpu_pci" ]]; then
+		logg "WARN: GPU_UNBIND_ENABLE=1 but no nvidia PCI device found"
+	elif [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would unload nvidia modules and remove PCI device 0000:$gpu_pci"
+	elif timeout 20 modprobe -r nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>&1 | logger -t night-lockdown; then
+		if echo 1 >"/sys/bus/pci/devices/0000:$gpu_pci/remove" 2>/dev/null; then
+			logg "GPU unbound (0000:$gpu_pci removed from PCI bus)"
+			# Unloading nvidia_drm / the PCI remove can surface a fallback
+			# framebuffer that isn't blanked -- same failure class the
+			# continuous re-blank during the lightdm stop (above) exists to
+			# close, just triggered by module unload instead of a VT switch.
+			blank_console
+		else
+			logg "WARN: modules unloaded but PCI remove failed for 0000:$gpu_pci"
+		fi
+	else
+		logg "WARN: modprobe -r timed out or failed -- GPU left bound, skipping unbind"
+	fi
+fi
+
 logg "night lockdown active — servers up, GUI down, login surface masked, console dark"
 ENTER_EOF
 	chmod 0755 "$ENTER_SCRIPT"
@@ -396,6 +499,8 @@ RGB_ENABLE="${RGB_ENABLE:-1}"
 RGB_OFF_MODE="${RGB_OFF_MODE:-static}"
 RGB_OFF_COLOR="${RGB_OFF_COLOR:-000000}"
 RGB_HOME="${RGB_HOME:-/root}"
+POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
+GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
@@ -408,6 +513,10 @@ if [[ "$DRY_RUN" == "1" ]]; then
 	logg "DRY_RUN NOTE: run (DRY_RUN unset) validates them. The alarm floor/dedup"
 	logg "DRY_RUN NOTE: logic (locked_at_epoch) IS exercised"
 	logg "DRY_RUN NOTE: faithfully here, since that part is pure calculation."
+	logg "DRY_RUN NOTE: The CPU EPP / GPU power-limit restore and (if enabled)"
+	logg "DRY_RUN NOTE: the PCI rescan are also never actually applied under"
+	logg "DRY_RUN NOTE: DRY_RUN — real-hardware timing/driver behavior for"
+	logg "DRY_RUN NOTE: those is unverified until a real run."
 fi
 
 run() {
@@ -467,6 +576,33 @@ restore_console
 #    getty@.service is ever masked; autovt@.service is just an alias to it.
 run systemctl unmask getty@.service
 
+# 1a. If the GPU was unbound at lockdown, rescan the PCI bus to bring it back
+#     before starting the GUI. Harmless no-op if nothing was removed. Polls
+#     for the driver actually being ready (nvidia-smi succeeding) rather than
+#     a fixed sleep -- starting lightdm against a GPU that hasn't finished
+#     reprobing risks a failed X start, which (unlike a mis-enumerated
+#     display) the autorandr retry loop above cannot recover from.
+if [[ "$GPU_UNBIND_ENABLE" == "1" ]]; then
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would rescan PCI bus and wait for the GPU driver to be ready"
+	else
+		echo 1 >/sys/bus/pci/rescan 2>/dev/null || logg "WARN: PCI rescan failed"
+		gpu_ready=false
+		for ((i = 0; i < 15; i++)); do
+			if nvidia-smi >/dev/null 2>&1; then
+				gpu_ready=true
+				break
+			fi
+			sleep 1
+		done
+		if [[ "$gpu_ready" == true ]]; then
+			logg "GPU driver ready after PCI rescan"
+		else
+			logg "WARN: GPU driver not ready after rescan + 15s -- starting GUI anyway"
+		fi
+	fi
+fi
+
 # 2. Start the GUI — lightdm autologins back into i3/dwm.
 run systemctl start lightdm.service
 
@@ -500,6 +636,43 @@ fi
 for card in $ALSA_CARDS; do
 	command -v amixer >/dev/null 2>&1 && run amixer -c "$card" -q set Master unmute
 done
+
+# 3b. Restore CPU EPP and GPU power limit to their pre-lockdown values (saved
+#     by night-lockdown-enter.sh). Missing state file = enter never ran the
+#     power-save step (e.g. it was disabled then) — nothing to restore.
+#     Delete each .prev file after a successful (non-DRY_RUN) restore: enter's
+#     capture is guarded on the file NOT existing (crash-safety, see its own
+#     comment), so leaving a stale file here would freeze future captures to
+#     tonight's value forever instead of tracking whatever the user's daytime
+#     setting actually is.
+if [[ "$POWER_SAVE_ENABLE" == "1" ]]; then
+	if [[ -r "$STATE_DIR/cpu_epp.prev" ]]; then
+		prev_epp="$(cat "$STATE_DIR/cpu_epp.prev")"
+		if [[ -n "$prev_epp" ]]; then
+			for epp_file in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+				[[ -e "$epp_file" ]] || continue
+				if [[ "$DRY_RUN" == "1" ]]; then
+					logg "DRY_RUN: would write $prev_epp > $epp_file"
+				else
+					echo "$prev_epp" >"$epp_file" 2>/dev/null || logg "WARN: could not restore EPP on $epp_file"
+				fi
+			done
+		fi
+		[[ "$DRY_RUN" == "1" ]] || rm -f "$STATE_DIR/cpu_epp.prev"
+	fi
+
+	if command -v nvidia-smi >/dev/null 2>&1 && [[ -r "$STATE_DIR/gpu_power_limit_watts.prev" ]]; then
+		prev_watts="$(cat "$STATE_DIR/gpu_power_limit_watts.prev")"
+		if [[ -n "$prev_watts" ]]; then
+			if [[ "$DRY_RUN" == "1" ]]; then
+				logg "DRY_RUN: would run: timeout 10 nvidia-smi -pl $prev_watts"
+			else
+				run timeout 10 nvidia-smi -pl "$prev_watts"
+			fi
+		fi
+		[[ "$DRY_RUN" == "1" ]] || rm -f "$STATE_DIR/gpu_power_limit_watts.prev"
+	fi
+fi
 
 # 4. Re-assert lights-off rather than restoring anything: the preference is no
 #    lighting at all, ever, so the morning must not turn the RGB back on.
