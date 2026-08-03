@@ -33,6 +33,7 @@ REWRAP_SOURCE="$SRC_DIR/rewrap_pkg_managers.sh"
 REWRAP_DEST="${INSTALL_DIR}/rewrap_pkg_managers.sh"
 HOOK_SOURCE="$SRC_DIR/96-restore-pkg-wrappers.hook"
 HOOK_DEST="/etc/pacman.d/hooks/96-restore-pkg-wrappers.hook"
+SOURCE_MANIFEST="/var/lib/pacman-wrapper/makepkg-source.sha256"
 
 # Copy a file, unlocking an immutable destination first (the shared lib may be
 # chattr +i from install_pacman_wrapper.sh's integrity protection).
@@ -82,6 +83,27 @@ deploy_file "$HOOK_SOURCE" "$HOOK_DEST" 644
 # Point /usr/bin/makepkg at the wrapper.
 echo -e "${BLUE}Creating symbolic link /usr/bin/makepkg -> ${WRAPPER_DEST}...${NC}"
 ln -sf "$WRAPPER_DEST" /usr/bin/makepkg
+
+# Drift manifest — see deployment_drift() in check_and_enable_services.sh. Same
+# rationale as the pacman wrapper's: "the file exists" is not "the right version
+# is deployed", and only the second one is worth re-checking every hour.
+mkdir -p "$(dirname "$SOURCE_MANIFEST")"
+{
+	sha256sum "$WRAPPER_SOURCE" "$LOCK_LIB_SOURCE" "$REWRAP_SOURCE" "$HOOK_SOURCE" || {
+		echo -e "${RED}Failed to checksum makepkg wrapper sources${NC}" >&2
+		exit 1
+	}
+	sha256sum "$WRAPPER_DEST" "$REWRAP_DEST" "$HOOK_DEST" || {
+		echo -e "${RED}Failed to checksum installed makepkg wrapper${NC}" >&2
+		exit 1
+	}
+} >"$SOURCE_MANIFEST"
+
+if [[ ! -s $SOURCE_MANIFEST ]]; then
+	echo -e "${RED}Error: drift manifest was not created or is empty${NC}" >&2
+	exit 1
+fi
+chmod 644 "$SOURCE_MANIFEST"
 
 echo -e "${GREEN}makepkg wrapper installed.${NC} Original preserved at ${CYAN}/usr/bin/makepkg.orig${NC}"
 echo -e "Upgrade-survival hook installed at ${CYAN}${HOOK_DEST}${NC}"

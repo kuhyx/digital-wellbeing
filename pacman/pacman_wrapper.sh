@@ -12,6 +12,10 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 PACMAN_BIN="/usr/bin/pacman"
+# Installed alongside the wrapper by install_pacman_wrapper.sh. Absent on a
+# machine that has not run it yet, in which case transactions simply are not
+# serialised (see the guarded source below).
+HEAVY_JOB_LOCK_LIB="/usr/local/bin/heavy_job_lock.sh"
 MAKEPKG_CAPPED_BIN="/usr/local/bin/makepkg_capped"
 
 declare -a BLOCKED_KEYWORDS_LIST=()
@@ -87,7 +91,7 @@ load_policy_lists() {
 				continue
 			fi
 			target_array+=("${line,,}")
-		done < "$file_path"
+		done <"$file_path"
 	}
 
 	if [[ -f $blocked_file ]]; then
@@ -741,7 +745,19 @@ if should_use_wrapper_guard_lib_fallback "$@"; then
 	manual_guard_lib_fallback=1
 fi
 
-"$PACMAN_BIN" "$@"
+# Serialise real TRANSACTIONS against builds and coverage runs on this 7.6 GB
+# box (see utils/heavy_job_lock.sh). Deliberately scoped by needs_unlock, i.e.
+# -S/-U/-R only: read-only queries like `pacman -Q` take no db lock and run
+# constantly from background services here, so making those wait behind a
+# 20-minute Gradle build would be worse than the contention it avoids.
+# with_heavy_lock always fails open, so this can never brick package management.
+if [[ -r $HEAVY_JOB_LOCK_LIB ]] && needs_unlock "$@"; then
+	# shellcheck source=/dev/null
+	source "$HEAVY_JOB_LOCK_LIB"
+	with_heavy_lock pacman -- "$PACMAN_BIN" "$@"
+else
+	"$PACMAN_BIN" "$@"
+fi
 exit_code=$?
 
 if [[ $manual_guard_lib_fallback -eq 1 ]]; then
