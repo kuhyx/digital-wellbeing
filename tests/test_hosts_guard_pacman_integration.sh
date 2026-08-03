@@ -60,7 +60,7 @@ assert_order() {
 		exit 1
 	fi
 
-	if (( first_line < second_line )); then
+	if ((first_line < second_line)); then
 		echo "PASS: $message"
 	else
 		echo "FAIL: $message"
@@ -87,6 +87,9 @@ assert_order "$WRAPPER_FILE" 'if ! check_and_handle_db_lock "$@"; then' 'if shou
 assert_contains "$WRAPPER_FILE" 'manual_guard_lib_fallback=1' \
 	"wrapper tracks whether manual hosts guard fallback was used"
 
+# Literal source text being searched for; expanding $SCRIPT_DIR /
+# $LOCK_LIB_DEST here would search for this machine's values instead.
+# shellcheck disable=SC2016
 assert_contains "$INSTALLER_FILE" 'install -m 755 "$SCRIPT_DIR/pacman-hooks/hosts-guard-common.sh" /usr/local/share/hosts-guard/' \
 	"installer deploys shared hosts guard hook helpers"
 
