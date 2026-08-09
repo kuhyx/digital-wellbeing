@@ -1,5 +1,12 @@
 # Exact package names that should bypass the block even if matching a keyword.
 thorium-browser-bin
+# Allowed 2026-08-09 as a LeechBlock-enforced browser, same footing as Thorium:
+# install_leechblock.sh already policy-installs the blocker into LibreWolf via
+# /etc/librewolf/policies, so this is not an unfiltered escape hatch. Needed
+# because Chromium's MV2 sunset ends full uBlock Origin (with all filter lists)
+# on Thorium; the Gecko build keeps it. The `librewolf` KEYWORD stays blocked,
+# so every other Firefox fork remains barred.
+librewolf
 minizip
 miniupnpc
 haskell-generically
