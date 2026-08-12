@@ -346,14 +346,34 @@ function display_operation() {
 	esac
 }
 
+# Helper: strip a pacman package-file suffix (-<pkgver>-<pkgrel>-<arch>.pkg.tar.<ext>)
+# down to the bare package name, if present. `pacman -U <path>` (what `yay`
+# always uses to install a package it just built locally) passes a filename
+# like "ungoogled-chromium-bin-150.0.7871.186-1-x86_64.pkg.tar.zst", not the
+# bare name — without this, an exact-match whitelist entry for
+# "ungoogled-chromium-bin" could never match a `-U` install and would always
+# fall through to the (correctly still-substring) blocked-keywords check.
+# Leaves package names without this suffix (the `-S` case) untouched.
+# shellcheck disable=SC2329 # invoked indirectly by name (is_blocked_package_name)
+function strip_pkgfile_suffix() {
+	local name="$1"
+	if [[ $name =~ ^(.+)-[^-]+-[0-9]+-(x86_64|any|i686|aarch64)\.pkg\.tar\.(zst|xz|gz|bz2|lrz|lzo|Z)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+	else
+		printf '%s' "$name"
+	fi
+}
+
 # Helper: return 0 if the given package name is blocked by policy
 # shellcheck disable=SC2329 # invoked indirectly by name (remove_installed_packages_matching, check_install_for)
 function is_blocked_package_name() {
 	load_policy_lists
 	local normalized="${1,,}"
+	local bare_name
+	bare_name="$(strip_pkgfile_suffix "$normalized")"
 
 	for allowed in "${WHITELISTED_NAMES_LIST[@]}"; do
-		if [[ $normalized == "$allowed" ]]; then
+		if [[ $normalized == "$allowed" || $bare_name == "$allowed" ]]; then
 			return 1
 		fi
 	done

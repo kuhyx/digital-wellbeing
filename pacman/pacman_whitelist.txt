@@ -1,5 +1,34 @@
 # Exact package names that should bypass the block even if matching a keyword.
 thorium-browser-bin
+# Allowed 2026-08-12: Thorium (thorium-browser-bin) has a recurring, deterministic
+# internal crash (identical stack offsets across 7 coredumps, root cause an
+# unresolved CHECK/assertion in a stripped binary at its latest available
+# version — see session notes). Tried plain `chromium` (extra/chromium)
+# first, but that package is already past Chromium's Manifest V2 removal
+# (151.0.7922.108 — MV2 code paths gone as of Chromium 151, per upstream
+# changelog), so full uBlock Origin (MV2) cannot load and it was removed.
+# ungoogled-chromium is the V8/Chromium browser that still ships the MV2
+# extension runtime as a maintainer-patched stopgap (NOT a permanent
+# guarantee — could disappear in any future ungoogled-chromium release with
+# no warning; re-check this if uBO stops loading after a pacman/yay update).
+# The `chromium` KEYWORD stays blocked, so plain chromium/chromium-dev/etc.
+# remain barred — only the exact `ungoogled-chromium` package name is allowed.
+ungoogled-chromium
+# Also allow the prebuilt -bin variant: a from-source ungoogled-chromium
+# build via yay takes ~14h+ even throttled to half the machine's cores (full
+# Chromium compile, 56000+ ninja steps) — completely impractical for same-day
+# use. ungoogled-chromium-bin trails the source package by about one version
+# (150.x vs 151.x measured 2026-08-12) since it's a separately-maintained
+# prebuilt, but that lag is normal and acceptable; it is NOT a security
+# downgrade rationale, just a build-time one.
+ungoogled-chromium-bin
+# makepkg.conf's global OPTIONS has `debug` enabled, so building
+# ungoogled-chromium-bin also produces a companion
+# ungoogled-chromium-bin-debug package (debug symbols only — not loaded or
+# shipped by default). `yay -S` always installs both via one `pacman -U`
+# call; whitelisting only the main package still blocks the whole
+# transaction on the -debug package's name matching the `chromium` keyword.
+ungoogled-chromium-bin-debug
 # Allowed 2026-08-09 as a LeechBlock-enforced browser, same footing as Thorium:
 # install_leechblock.sh already policy-installs the blocker into LibreWolf via
 # /etc/librewolf/policies, so this is not an unfiltered escape hatch. Needed
