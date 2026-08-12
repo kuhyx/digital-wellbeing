@@ -221,6 +221,57 @@ else
 	exit 1
 fi
 
+# Test: strip_pkgfile_suffix + is_blocked_package_name correctly recognise a
+# whitelisted package even when passed as a full `-U <path>.pkg.tar.zst`
+# argument. Regression test for the 2026-08-12 bug: `yay` always installs a
+# package it just built via `pacman -U <path>/<pkg>-<ver>-<rel>-<arch>.pkg.tar.zst`,
+# not the bare name — an exact-match whitelist entry could never match that
+# filename, silently blocking every AUR package the whitelist was meant to
+# allow the moment it went through a real `-U` install rather than `-S`.
+echo "[TEST] Verifying strip_pkgfile_suffix + is_blocked_package_name handle -U package-file arguments..."
+PACMAN_WRAPPER_FUNC_TEST_SCRIPT="$(mktemp)"
+FIXTURE_DIR="$(mktemp -d)"
+trap 'rm -f "$PACMAN_WRAPPER_FUNC_TEST_SCRIPT"; rm -rf "$FIXTURE_DIR"' EXIT
+
+printf 'chromium\n' >"$FIXTURE_DIR/pacman_blocked_keywords.txt"
+printf 'ungoogled-chromium-bin\n' >"$FIXTURE_DIR/pacman_whitelist.txt"
+printf '\n' >"$FIXTURE_DIR/pacman_greylist.txt"
+
+{
+	cat <<'HEADER'
+#!/bin/bash
+set -u
+load_policy_lists() { :; } # is_blocked_package_name calls this; arrays are pre-seeded below instead
+HEADER
+	sed -n '/^function strip_pkgfile_suffix/,/^}/p' "$WRAPPER_DIR/pacman_wrapper.sh"
+	sed -n '/^function is_blocked_package_name/,/^}/p' "$WRAPPER_DIR/pacman_wrapper.sh"
+	printf 'BLOCKED_KEYWORDS_LIST=(%s)\n' "$(printf "'%s' " "$(cat "$FIXTURE_DIR/pacman_blocked_keywords.txt")")"
+	printf 'WHITELISTED_NAMES_LIST=(%s)\n' "$(printf "'%s' " "$(cat "$FIXTURE_DIR/pacman_whitelist.txt")")"
+	printf 'GREYLISTED_KEYWORDS_LIST=()\n'
+	cat <<'BODY'
+echo "$(strip_pkgfile_suffix "ungoogled-chromium-bin-150.0.7871.186-1-x86_64.pkg.tar.zst")"
+if is_blocked_package_name "ungoogled-chromium-bin-150.0.7871.186-1-x86_64.pkg.tar.zst"; then echo BLOCKED; else echo ALLOWED; fi
+if is_blocked_package_name "chromium-151.0.7922.108-1-x86_64.pkg.tar.zst"; then echo BLOCKED; else echo ALLOWED; fi
+BODY
+} >"$PACMAN_WRAPPER_FUNC_TEST_SCRIPT"
+
+FUNC_TEST_OUTPUT="$(bash "$PACMAN_WRAPPER_FUNC_TEST_SCRIPT")"
+EXPECTED_FUNC_TEST_OUTPUT="ungoogled-chromium-bin
+ALLOWED
+BLOCKED"
+
+if [[ "$FUNC_TEST_OUTPUT" == "$EXPECTED_FUNC_TEST_OUTPUT" ]]; then
+	echo "✓ strip_pkgfile_suffix bares -U filenames; whitelisted packages are allowed via -U, non-whitelisted blocked keywords still blocked"
+else
+	echo "✗ Mismatch:"
+	echo "  expected: $EXPECTED_FUNC_TEST_OUTPUT"
+	echo "  got:      $FUNC_TEST_OUTPUT"
+	exit 1
+fi
+rm -f "$PACMAN_WRAPPER_FUNC_TEST_SCRIPT"
+rm -rf "$FIXTURE_DIR"
+trap - EXIT
+
 echo ""
 echo "=== All Tests Passed! ==="
 echo ""
