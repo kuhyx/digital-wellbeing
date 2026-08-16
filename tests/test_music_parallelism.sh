@@ -49,6 +49,11 @@ WORKTREE_LIB="$WORKTREE/scripts/lib/common.sh"
 mkdir -p "$(dirname "$WORKTREE_SCRIPT")" "$(dirname "$WORKTREE_LIB")" "$BIN_DIR"
 cp "$TARGET_SCRIPT" "$WORKTREE_SCRIPT"
 
+# The script sources its own libs from $SCRIPT_DIR/lib/. They must travel into
+# the worktree beside it, or every source line fails and the script exits before
+# any behaviour under test runs.
+cp -r "$(dirname "$TARGET_SCRIPT")/lib" "$(dirname "$WORKTREE_SCRIPT")/lib"
+
 # Fail loudly if the copy cannot reach the stub, rather than letting the script
 # fall through to the real library and produce a misleading behavioural failure.
 STUB_FROM_SCRIPT="$(dirname "$WORKTREE_SCRIPT")/../../lib/common.sh"
