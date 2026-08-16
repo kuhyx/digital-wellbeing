@@ -123,11 +123,12 @@ Unscramble the word to proceed (you have 60 seconds):
 ```
 
 Parameters vary by package type:
+
 | Package Type | Word Length | Words Shown | Timeout | Initial Delay |
-|--------------|-------------|-------------|---------|---------------|
-| Steam | 5 | 160 | 60s | 0-20s |
-| VirtualBox | 7 | 150 | 120s | 0-45s |
-| Greylist | 6 | 120 | 90s | 0-30s |
+| ------------ | ----------- | ----------- | ------- | ------------- |
+| Steam        | 5           | 160         | 60s     | 0-20s         |
+| VirtualBox   | 7           | 150         | 120s    | 0-45s         |
+| Greylist     | 6           | 120         | 90s     | 0-30s         |
 
 ## More detail
 
