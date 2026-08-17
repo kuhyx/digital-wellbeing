@@ -24,7 +24,7 @@ pac_tests_makepkg_and_installer() {
 
 	# Test 15: Verify installer deploys makepkg capped wrapper
 	echo "[TEST 15] Verifying installer deploys makepkg capped wrapper..."
-	if grep -q "MAKEPKG_CAPPED" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "MAKEPKG_CAPPED" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer includes makepkg capped deployment"
 	else
 		echo "✗ Installer does not include makepkg capped deployment"
@@ -42,7 +42,7 @@ pac_tests_makepkg_and_installer() {
 
 	# Test 17: Verify installer deploys mkpkg helper
 	echo "[TEST 17] Verifying installer deploys mkpkg helper..."
-	if grep -q "MKPKG" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "MKPKG" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer includes mkpkg helper deployment"
 	else
 		echo "✗ Installer does not include mkpkg helper deployment"
@@ -60,7 +60,7 @@ pac_tests_makepkg_and_installer() {
 
 	# Test 19: Verify installer handles immutable files during updates
 	echo "[TEST 19] Verifying installer unlocks immutable files before copy/write..."
-	if grep -q "unlock_immutable_file_if_needed" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "unlock_immutable_file_if_needed" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer immutable-file handling found"
 	else
 		echo "✗ Installer immutable-file handling missing"

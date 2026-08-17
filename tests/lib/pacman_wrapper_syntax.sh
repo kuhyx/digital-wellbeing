@@ -69,7 +69,7 @@ pac_tests_wrapper_and_vbox() {
 
 	# Test 8: Verify installer creates integrity file
 	echo "[TEST 8] Verifying installer creates integrity checksums..."
-	if grep -q "INTEGRITY_FILE" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "INTEGRITY_FILE" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer references integrity file"
 	else
 		echo "✗ Installer does not create integrity file"
@@ -78,7 +78,7 @@ pac_tests_wrapper_and_vbox() {
 
 	# Test 9: Verify installer uses chattr to make files immutable
 	echo "[TEST 9] Verifying installer makes policy files immutable..."
-	if grep -q "chattr +i" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "chattr +i" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer sets immutable attributes"
 	else
 		echo "✗ Installer does not set immutable attributes"
@@ -106,7 +106,7 @@ pac_tests_wrapper_and_vbox() {
 
 	# Test 12: Verify installer installs VirtualBox enforcement script
 	echo "[TEST 12] Verifying installer handles VirtualBox enforcement script..."
-	if grep -q "VBOX_ENFORCE" "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+	if grep -qr "VBOX_ENFORCE" "$WRAPPER_DIR/install_pacman_wrapper.sh" "$WRAPPER_DIR/lib"; then
 		echo "✓ Installer includes VirtualBox enforcement script"
 	else
 		echo "✗ Installer does not include VirtualBox enforcement script"

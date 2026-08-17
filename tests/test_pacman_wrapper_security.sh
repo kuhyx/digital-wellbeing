@@ -46,7 +46,7 @@ echo "[TEST] Verifying installer checksums the lock library..."
 # Literal source text being searched for; expanding $SCRIPT_DIR /
 # $LOCK_LIB_DEST here would search for this machine's values instead.
 # shellcheck disable=SC2016
-if grep -qF 'sha256sum "$LOCK_LIB_DEST"' "$WRAPPER_DIR/install_pacman_wrapper.sh"; then
+if grep -qF 'sha256sum "$LOCK_LIB_DEST"' "$WRAPPER_DIR/lib/integrity.sh"; then
 	echo "✓ Lock library is included in the integrity manifest"
 else
 	echo "✗ Lock library not checksummed by installer"
