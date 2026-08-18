@@ -1,15 +1,18 @@
 #!/bin/bash
-# Regression tests for pacman wrapper and hosts-guard hook integration.
+# Regression tests for pacman wrapper / guard-lib hosts-guard fallback integration.
+#
+# The pre-guard-lib hooks this test used to check (pacman-pre-unlock-hosts.sh,
+# pacman-post-relock-hosts.sh, hosts-guard-common.sh, install_pacman_hooks.sh)
+# were archived to testsAndMisc-archive once guard-lib's generic pacman hooks
+# (10-guard-lib-unlock-all.hook / 90-guard-lib-relock-all.hook) fully replaced
+# them -- see docs/superpowers/evidence/archive-setup-hosts-guard-2026-08-18.json.
+# Only pacman_wrapper.sh's guard-lib-aware fallback logic remains to check.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 WRAPPER_FILE="$REPO_DIR/scripts/periodic_background/digital_wellbeing/pacman/pacman_wrapper.sh"
-PRE_HOOK_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/pacman-pre-unlock-hosts.sh"
-POST_HOOK_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/pacman-post-relock-hosts.sh"
-COMMON_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/pacman-hooks/hosts-guard-common.sh"
-INSTALLER_FILE="$REPO_DIR/scripts/periodic_background/hosts/guard/install_pacman_hooks.sh"
 
 assert_contains() {
 	local file_path="$1"
@@ -22,19 +25,6 @@ assert_contains() {
 		echo "FAIL: $message"
 		exit 1
 	fi
-}
-
-assert_not_regex() {
-	local file_path="$1"
-	local pattern="$2"
-	local message="$3"
-
-	if grep -Eq "$pattern" "$file_path"; then
-		echo "FAIL: $message"
-		exit 1
-	fi
-
-	echo "PASS: $message"
 }
 
 first_line_number() {
@@ -70,27 +60,20 @@ assert_order() {
 
 echo "=== Hosts guard pacman integration regression tests ==="
 
-for file_path in "$WRAPPER_FILE" "$PRE_HOOK_FILE" "$POST_HOOK_FILE" "$COMMON_FILE" "$INSTALLER_FILE"; do
-	bash -n "$file_path"
-done
+bash -n "$WRAPPER_FILE"
 echo "PASS: shell syntax is valid"
 
-assert_not_regex "$PRE_HOOK_FILE" '(^|[[:space:]])(sudo[[:space:]]+)?rm[[:space:]]+/etc/hosts([[:space:]]|$)' \
-	"pre-transaction hook must not delete /etc/hosts"
-
 assert_contains "$WRAPPER_FILE" 'pacman_hooks_manage_guard_lib()' \
-	"wrapper detects when pacman hooks already manage hosts guard"
+	"wrapper detects when guard-lib's pacman hooks are installed"
 assert_contains "$WRAPPER_FILE" 'should_use_wrapper_guard_lib_fallback()' \
 	"wrapper exposes a dedicated fallback path for hosts guard"
 assert_order "$WRAPPER_FILE" 'if ! check_and_handle_db_lock "$@"; then' 'if should_use_wrapper_guard_lib_fallback "$@"; then' \
 	"wrapper checks pacman db lock before any manual hosts unlock fallback"
 assert_contains "$WRAPPER_FILE" 'manual_guard_lib_fallback=1' \
 	"wrapper tracks whether manual hosts guard fallback was used"
-
-# Literal source text being searched for; expanding $SCRIPT_DIR /
-# $LOCK_LIB_DEST here would search for this machine's values instead.
-# shellcheck disable=SC2016
-assert_contains "$INSTALLER_FILE" 'install -m 755 "$SCRIPT_DIR/pacman-hooks/hosts-guard-common.sh" /usr/local/share/hosts-guard/' \
-	"installer deploys shared hosts guard hook helpers"
+assert_contains "$WRAPPER_FILE" '/etc/pacman.d/hooks/10-guard-lib-unlock-all.hook' \
+	"wrapper's guard-lib detection checks the generic unlock-all hook"
+assert_contains "$WRAPPER_FILE" '/etc/pacman.d/hooks/90-guard-lib-relock-all.hook' \
+	"wrapper's guard-lib detection checks the generic relock-all hook"
 
 echo "All hosts guard pacman integration regression tests passed."
