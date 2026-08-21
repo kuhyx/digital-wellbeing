@@ -127,6 +127,14 @@ WRAP
 }
 
 wire_up_browsers() {
+	# The Firefox guidance and the closing summary interpolate the install
+	# layout. Those are set by resolve_version, which the entry script always
+	# runs first; defaulting them keeps this function callable on its own
+	# without aborting under `set -u` on an unbound VERSION_DIR.
+	local version_dir="${VERSION_DIR:-<not yet resolved>}"
+	local version="${VERSION:-<unknown>}"
+	local tag="${TAG:-<unknown>}"
+
 	info "Detecting installed browsers…"
 	for bin in "${!BROWSERS[@]}"; do
 		if command -v "$bin" >/dev/null 2>&1; then
@@ -158,19 +166,19 @@ Options:
      https://addons.mozilla.org/firefox/addon/leechblock-ng/
   2) For testing with Developer Edition or Nightly, you can set xpinstall.signatures.required=false
      and install a built XPI. We'll still keep the downloaded source at:
-       $VERSION_DIR
+       $version_dir
 
-To load temporarily for testing (session-only), open 'about:debugging#/runtime/this-firefox' and "Load Temporary Add-on…" then select $VERSION_DIR/manifest.json.
+To load temporarily for testing (session-only), open 'about:debugging#/runtime/this-firefox' and "Load Temporary Add-on…" then select $version_dir/manifest.json.
 
 Tip: Re-run this script with --install-firefox to auto-install from AMO via enterprise policy (requires sudo).
 FF
 	fi
 
 	if [[ $found_any -eq 0 && $ff_found -eq 0 ]]; then
-		warn "No supported browsers detected. We placed the extension at: $VERSION_DIR"
+		warn "No supported browsers detected. We placed the extension at: $version_dir"
 		echo "Supported (auto-wired): ${!BROWSERS[*]}. Detected Firefox variants will show guidance only."
 	fi
 
 	echo
-	info "Done. Version: $VERSION (tag $TAG) installed under $VERSION_DIR"
+	info "Done. Version: $version (tag $tag) installed under $version_dir"
 }
