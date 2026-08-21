@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Helpers sourced by the entry script.
 
+
+# Where the verbatim payload files live. Defined in the SAME file that uses it,
+# and with the use immediately below, because a definition placed further away
+# has been stripped by an autoformat pass three times during this work. The
+# failure mode is an unbound-variable abort midway through installing the
+# lockdown, so it must not depend on a distant line surviving.
+: "${_NL_PAYLOAD_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")/payloads" && pwd)}"
 install_unlock_script() {
 	log_info "Installing reversal to $UNLOCK_SCRIPT"
 	# The payload is a DATA FILE, not a heredoc: inlining it put this lib over
