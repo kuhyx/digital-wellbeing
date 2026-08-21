@@ -22,6 +22,21 @@ install_leechblock_payload() {
 		echo -e "${BLUE}Installing LeechBlock installer to ${LEECHBLOCK_INSTALLER_DEST}...${NC}"
 		cp "$LEECHBLOCK_INSTALLER_SOURCE" "$LEECHBLOCK_INSTALLER_DEST"
 		chmod +x "$LEECHBLOCK_INSTALLER_DEST"
+		# The installer sources every install phase from lib/ beside itself, so
+		# the directory has to travel with it. Deploying the entry script alone
+		# leaves a copy that dies on its first `source`. Mirror rather than
+		# merge, so a lib deleted upstream does not linger here.
+		if [ -d "$LEECHBLOCK_LIB_SOURCE" ]; then
+			rm -rf "$LEECHBLOCK_LIB_DEST"
+			mkdir -p "$LEECHBLOCK_LIB_DEST"
+			# Only the leechblock_* libs: lib/ is shared with unrelated scripts
+			# (the music_* helpers) that this payload has no business shipping.
+			cp "$LEECHBLOCK_LIB_SOURCE"/leechblock_*.sh "$LEECHBLOCK_LIB_DEST"/
+			chmod +x "$LEECHBLOCK_LIB_DEST"/leechblock_*.sh
+			echo -e "${GREEN}LeechBlock libs deployed to ${LEECHBLOCK_LIB_DEST}${NC}"
+		else
+			echo -e "${YELLOW}LeechBlock lib/ not found at ${LEECHBLOCK_LIB_SOURCE}; the deployed installer will not run${NC}"
+		fi
 		echo -e "${GREEN}LeechBlock installer deployed to ${LEECHBLOCK_INSTALLER_DEST}${NC}"
 	else
 		echo -e "${YELLOW}LeechBlock installer not found at ${LEECHBLOCK_INSTALLER_SOURCE}, skipping...${NC}"
