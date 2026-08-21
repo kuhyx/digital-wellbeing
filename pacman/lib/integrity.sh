@@ -46,6 +46,18 @@ write_policy_integrity_file() {
 			echo -e "${RED}Failed to checksum lock library${NC}" >&2
 			exit 1
 		}
+		# Same reasoning for the wrapper's phase libraries: they are sourced by
+		# pacman_wrapper.sh, so an unchecksummed lib would be an unguarded way
+		# to run code inside the wrapper. They are sourced BEFORE
+		# verify_policy_integrity (the fast path needs needs_unlock), so this
+		# manifest entry is what makes tampering detectable rather than what
+		# prevents the source — the check still refuses the transaction.
+		for pw_lib in "${PW_LIBS[@]}"; do
+			sha256sum "${INSTALL_DIR}/${pw_lib}.sh" || {
+				echo -e "${RED}Failed to checksum wrapper library ${pw_lib}${NC}" >&2
+				exit 1
+			}
+		done
 		# Whitelist is optional
 		if [[ -f "$WHITELIST_DEST" ]]; then
 			sha256sum "$WHITELIST_DEST" || {

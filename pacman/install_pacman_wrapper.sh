@@ -31,6 +31,10 @@ NC='\033[0m' # No Color
 # linter accepts. `$0` is the entry script either way.
 WRAPPER_SOURCE="$(dirname "$0")/pacman_wrapper.sh"
 LOCK_LIB_SOURCE="$(dirname "$0")/pacman_lock_lib.sh"
+# The wrapper's own phase libraries, deployed FLAT beside it (same shape as
+# pacman_lock_lib.sh). Named explicitly rather than globbed so a stray pw_*.sh
+# in a working tree cannot be deployed by accident.
+PW_LIBS=(pw_policy pw_guard pw_ui pw_challenge pw_cleanup)
 WORDS_SOURCE="$(dirname "$0")/words.txt"
 BLOCKED_SOURCE="$(dirname "$0")/pacman_blocked_keywords.txt"
 WHITELIST_SOURCE="$(dirname "$0")/pacman_whitelist.txt"

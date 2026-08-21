@@ -10,6 +10,18 @@ install_managed_files() {
 	copy_managed_file "$WRAPPER_SOURCE" "$WRAPPER_DEST" required "wrapper script"
 	copy_managed_file "$LOCK_LIB_SOURCE" "$LOCK_LIB_DEST" required "stale-lock library"
 	chmod 644 "$LOCK_LIB_DEST"
+
+	# The wrapper's phase libraries. They land flat beside the wrapper because
+	# pacman_wrapper.sh resolves them from its own directory, which is
+	# /usr/local/bin once installed. Required, not optional: without them the
+	# wrapper still runs but falls open to unwrapped pacman, so a partial
+	# install would silently disable every policy check.
+	local pw_lib
+	for pw_lib in "${PW_LIBS[@]}"; do
+		copy_managed_file "$(dirname "$WRAPPER_SOURCE")/${pw_lib}.sh" \
+			"${INSTALL_DIR}/${pw_lib}.sh" required "wrapper library ${pw_lib}"
+		chmod 644 "${INSTALL_DIR}/${pw_lib}.sh"
+	done
 	copy_managed_file "$WORDS_SOURCE" "$WORDS_DEST" required "words list"
 	copy_managed_file "$BLOCKED_SOURCE" "$BLOCKED_DEST" required "blocked keywords list"
 	copy_managed_file "$WHITELIST_SOURCE" "$WHITELIST_DEST" optional "whitelist"
