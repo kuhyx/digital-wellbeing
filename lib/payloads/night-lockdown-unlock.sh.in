@@ -1,0 +1,212 @@
+#!/bin/bash
+# Managed by setup_night_lockdown.sh — do not edit by hand.
+#
+# Lift night lockdown: unmask the login surface, restart the GUI, unmute audio.
+# Idempotent (safe to fire from the 5 staggered morning triggers and manual runs)
+# and deliberately independent of the shutdown fortress, so it can always run.
+set -euo pipefail
+
+readonly CONF_FILE="/etc/night-lockdown.conf"
+readonly STATE_DIR="/var/lib/night-lockdown"
+readonly STATE_FILE="$STATE_DIR/state"
+
+# shellcheck source=/dev/null
+[[ -r "$CONF_FILE" ]] && source "$CONF_FILE"
+ALSA_CARDS="${ALSA_CARDS:-}"
+LOCK_USER="${LOCK_USER:-}"
+LOCK_UID="${LOCK_UID:-}"
+MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
+AUTORANDR_PROFILE="${AUTORANDR_PROFILE:-default}"
+CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
+RGB_ENABLE="${RGB_ENABLE:-1}"
+RGB_OFF_MODE="${RGB_OFF_MODE:-static}"
+RGB_OFF_COLOR="${RGB_OFF_COLOR:-000000}"
+RGB_HOME="${RGB_HOME:-/root}"
+POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
+GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
+DRY_RUN="${DRY_RUN:-}"
+
+logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
+
+if [[ "$DRY_RUN" == "1" ]]; then
+	logg "DRY_RUN NOTE: log-only — lightdm is never actually started and"
+	logg "DRY_RUN NOTE: autorandr is never actually invoked. This CANNOT exercise"
+	logg "DRY_RUN NOTE: the real DisplayPort reconnect or graphical-session wait."
+	logg "DRY_RUN NOTE: A clean DRY_RUN run is NOT proof those work — only a real"
+	logg "DRY_RUN NOTE: run (DRY_RUN unset) validates them. The alarm floor/dedup"
+	logg "DRY_RUN NOTE: logic (locked_at_epoch) IS exercised"
+	logg "DRY_RUN NOTE: faithfully here, since that part is pure calculation."
+	logg "DRY_RUN NOTE: The CPU EPP / GPU power-limit restore and (if enabled)"
+	logg "DRY_RUN NOTE: the PCI rescan are also never actually applied under"
+	logg "DRY_RUN NOTE: DRY_RUN — real-hardware timing/driver behavior for"
+	logg "DRY_RUN NOTE: those is unverified until a real run."
+fi
+
+run() {
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would run: $*"
+		return 0
+	fi
+	if ! "$@"; then
+		logg "WARN: command failed (continuing): $*"
+	fi
+}
+
+# NOTE: this script used to also start morning-routine.service here, on a
+# fixed 05:00/05:15/05:30/06:00/07:00 ladder. wake-alarm-trigger.timer now
+# owns firing the alarm: it ticks every minute and fires at the time the
+# phone synced, so the alarm follows the phone instead of a hardcoded hour.
+# Keeping both meant a 07:00 alarm on a morning the phone said 08:00.
+
+mkdir -p "$STATE_DIR"
+
+# Idempotency — lifting when already unlocked is a safe no-op.
+if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "UNLOCKED" ]]; then
+	logg "already UNLOCKED — nothing else to do"
+	exit 0
+fi
+
+logg "lifting night lockdown"
+
+# 0. Restore the console: unblank it and let kernel/systemd talk to it again.
+#    Must happen even if everything below fails, or the machine would stay
+#    permanently silent on the console after any unlock.
+restore_console() {
+	local fb prev
+	for fb in /sys/class/graphics/fb*/blank; do
+		[[ -e "$fb" ]] || continue
+		if [[ "$DRY_RUN" == "1" ]]; then
+			logg "DRY_RUN: would write 0 (unblank) > $fb"
+			continue
+		fi
+		echo 0 >"$fb" 2>/dev/null || true
+	done
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would restore printk + systemd status messages"
+		return 0
+	fi
+	[[ -w "$CONSOLE_TTY" ]] && setterm --term linux --blank poke --powersave off \
+		>"$CONSOLE_TTY" 2>/dev/null
+	if [[ -r "$STATE_DIR/printk.prev" ]]; then
+		prev="$(cat "$STATE_DIR/printk.prev")"
+		[[ -n "$prev" ]] && sysctl -q -w "kernel.printk=$prev" 2>/dev/null
+	fi
+	kill -s RTMIN+20 1 2>/dev/null || true # systemd: status messages back on
+}
+restore_console
+
+# 1. Unmask the login surface (undo the persistent /dev/null mask). Only
+#    getty@.service is ever masked; autovt@.service is just an alias to it.
+run systemctl unmask getty@.service
+
+# 1a. If the GPU was unbound at lockdown, rescan the PCI bus to bring it back
+#     before starting the GUI. Harmless no-op if nothing was removed. Polls
+#     for the driver actually being ready (nvidia-smi succeeding) rather than
+#     a fixed sleep -- starting lightdm against a GPU that hasn't finished
+#     reprobing risks a failed X start, which (unlike a mis-enumerated
+#     display) the autorandr retry loop above cannot recover from.
+if [[ "$GPU_UNBIND_ENABLE" == "1" ]]; then
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would rescan PCI bus and wait for the GPU driver to be ready"
+	else
+		echo 1 >/sys/bus/pci/rescan 2>/dev/null || logg "WARN: PCI rescan failed"
+		gpu_ready=false
+		for ((i = 0; i < 15; i++)); do
+			if nvidia-smi >/dev/null 2>&1; then
+				gpu_ready=true
+				break
+			fi
+			sleep 1
+		done
+		if [[ "$gpu_ready" == true ]]; then
+			logg "GPU driver ready after PCI rescan"
+		else
+			logg "WARN: GPU driver not ready after rescan + 15s -- starting GUI anyway"
+		fi
+	fi
+fi
+
+# 2. Start the GUI — lightdm autologins back into i3/dwm.
+run systemctl start lightdm.service
+
+# 2a. Reconnect/reconfigure displays. A DisplayPort link does not always
+#     re-enumerate cleanly on its own after the console teardown, leaving a
+#     monitor disconnected until someone runs xrandr by hand. Retry autorandr
+#     for a bit while the session comes up instead. Requires a saved profile
+#     ('autorandr --save default' run once while all monitors are connected).
+if [[ -n "$LOCK_USER" && -n "$LOCK_UID" ]] && command -v autorandr >/dev/null 2>&1; then
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would run autorandr --change as $LOCK_USER"
+	else
+		autorandr_ok=false
+		for ((i = 0; i < 15; i++)); do
+			if sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" DISPLAY=:0 \
+				autorandr --change --default "$AUTORANDR_PROFILE" >/dev/null 2>&1; then
+				autorandr_ok=true
+				break
+			fi
+			sleep 1
+		done
+		if [[ "$autorandr_ok" == true ]]; then
+			logg "autorandr: displays restored (profile '$AUTORANDR_PROFILE')"
+		else
+			logg "WARN: autorandr did not settle after retries — displays may need manual xrandr"
+		fi
+	fi
+fi
+
+# 3. Restore audio (unmute the cards muted at lockdown).
+for card in $ALSA_CARDS; do
+	command -v amixer >/dev/null 2>&1 && run amixer -c "$card" -q set Master unmute
+done
+
+# 3b. Restore CPU EPP and GPU power limit to their pre-lockdown values (saved
+#     by night-lockdown-enter.sh). Missing state file = enter never ran the
+#     power-save step (e.g. it was disabled then) — nothing to restore.
+#     Delete each .prev file after a successful (non-DRY_RUN) restore: enter's
+#     capture is guarded on the file NOT existing (crash-safety, see its own
+#     comment), so leaving a stale file here would freeze future captures to
+#     tonight's value forever instead of tracking whatever the user's daytime
+#     setting actually is.
+if [[ "$POWER_SAVE_ENABLE" == "1" ]]; then
+	if [[ -r "$STATE_DIR/cpu_epp.prev" ]]; then
+		prev_epp="$(cat "$STATE_DIR/cpu_epp.prev")"
+		if [[ -n "$prev_epp" ]]; then
+			for epp_file in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+				[[ -e "$epp_file" ]] || continue
+				if [[ "$DRY_RUN" == "1" ]]; then
+					logg "DRY_RUN: would write $prev_epp > $epp_file"
+				else
+					echo "$prev_epp" >"$epp_file" 2>/dev/null || logg "WARN: could not restore EPP on $epp_file"
+				fi
+			done
+		fi
+		[[ "$DRY_RUN" == "1" ]] || rm -f "$STATE_DIR/cpu_epp.prev"
+	fi
+
+	if command -v nvidia-smi >/dev/null 2>&1 && [[ -r "$STATE_DIR/gpu_power_limit_watts.prev" ]]; then
+		prev_watts="$(cat "$STATE_DIR/gpu_power_limit_watts.prev")"
+		if [[ -n "$prev_watts" ]]; then
+			if [[ "$DRY_RUN" == "1" ]]; then
+				logg "DRY_RUN: would run: timeout 10 nvidia-smi -pl $prev_watts"
+			else
+				run timeout 10 nvidia-smi -pl "$prev_watts"
+			fi
+		fi
+		[[ "$DRY_RUN" == "1" ]] || rm -f "$STATE_DIR/gpu_power_limit_watts.prev"
+	fi
+fi
+
+# 4. Re-assert lights-off rather than restoring anything: the preference is no
+#    lighting at all, ever, so the morning must not turn the RGB back on.
+if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
+	run env HOME="$RGB_HOME" openrgb --mode "$RGB_OFF_MODE" --color "$RGB_OFF_COLOR"
+fi
+
+# 5. Record state BEFORE the (possibly long) alarm wait, so re-fired unlock
+#    triggers dedupe on the state token instead of double-starting things.
+if [[ "$DRY_RUN" != "1" ]]; then
+	echo UNLOCKED >"$STATE_FILE"
+fi
+
+logg "night lockdown lifted — GUI restored, login surface unmasked"

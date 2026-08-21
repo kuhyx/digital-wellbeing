@@ -1,0 +1,279 @@
+#!/bin/bash
+# Managed by setup_night_lockdown.sh — do not edit by hand.
+#
+# Enter night lockdown: tear down the user GUI and mask the TTY login surface so
+# the machine is unusable from the keyboard, while every background server keeps
+# running. Reversed by night-lockdown-unlock.sh (05:00 timer or SSH recovery).
+# All steps are best-effort and logged; DRY_RUN=1 logs intended actions only.
+set -euo pipefail
+
+readonly CONF_FILE="/etc/night-lockdown.conf"
+readonly STATE_DIR="/var/lib/night-lockdown"
+readonly STATE_FILE="$STATE_DIR/state"
+
+# shellcheck source=/dev/null
+[[ -r "$CONF_FILE" ]] && source "$CONF_FILE"
+LOCK_USER="${LOCK_USER:-}"
+LOCK_UID="${LOCK_UID:-}"
+ALSA_CARDS="${ALSA_CARDS:-}"
+RGB_ENABLE="${RGB_ENABLE:-1}"
+MONITORED_USER_UNITS="${MONITORED_USER_UNITS:-}"
+MONITORED_PROCS="${MONITORED_PROCS:-}"
+MIN_WAKE_AFTER_LOCKDOWN_HOURS="${MIN_WAKE_AFTER_LOCKDOWN_HOURS:-8}"
+CONSOLE_TTY="${CONSOLE_TTY:-/dev/tty1}"
+CONSOLE_BLANK_MODE="${CONSOLE_BLANK_MODE:-1}"
+POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
+CPU_EPP_NIGHT="${CPU_EPP_NIGHT:-power}"
+GPU_POWER_LIMIT_NIGHT_WATTS="${GPU_POWER_LIMIT_NIGHT_WATTS:-100}"
+GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
+DRY_RUN="${DRY_RUN:-}"
+
+logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
+
+if [[ "$DRY_RUN" == "1" ]]; then
+	logg "DRY_RUN NOTE: log-only — lightdm is never actually stopped and the"
+	logg "DRY_RUN NOTE: console framebuffer is never actually touched. This CANNOT"
+	logg "DRY_RUN NOTE: exercise the blank-vs-VT-switch timing race (bug: visible"
+	logg "DRY_RUN NOTE: console text). A clean DRY_RUN run is NOT proof that fix"
+	logg "DRY_RUN NOTE: works — only a real run (DRY_RUN unset) validates it."
+	logg "DRY_RUN NOTE: The CPU EPP write, nvidia-smi power-limit cap, and (if"
+	logg "DRY_RUN NOTE: enabled) GPU PCI-unbind are also never actually applied"
+	logg "DRY_RUN NOTE: under DRY_RUN — real-hardware timing/driver behavior for"
+	logg "DRY_RUN NOTE: those is unverified until a real run."
+fi
+
+# Run a command best-effort: log-only under DRY_RUN, never abort the lockdown.
+run() {
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would run: $*"
+		return 0
+	fi
+	if ! "$@"; then
+		logg "WARN: command failed (continuing): $*"
+	fi
+}
+
+# Run a command as the desktop user inside their session bus.
+run_as_user() {
+	[[ -n "$LOCK_USER" && -n "$LOCK_UID" && -d "/run/user/$LOCK_UID" ]] || return 0
+	run sudo -u "$LOCK_USER" env "XDG_RUNTIME_DIR=/run/user/$LOCK_UID" "$@"
+}
+
+# Silence everything that prints to the text console. Once lightdm stops, the VT
+# reverts to fbcon and any kernel/systemd message lights the screen back up.
+silence_console() {
+	# systemd status messages ("Starting/Stopped ...") -> off. RTMIN+20 re-enables.
+	run kill -s RTMIN+21 1
+	# Kernel messages -> console. Save the current printk so unlock can restore it.
+	if [[ "$DRY_RUN" != "1" ]]; then
+		cat /proc/sys/kernel/printk >"$STATE_DIR/printk.prev" 2>/dev/null || true
+	fi
+	run sysctl -q -w "kernel.printk=1 4 1 4"
+}
+
+# Force the console dark — black screen, but WITHOUT DPMS power management.
+# Powering the output down (FB_BLANK_POWERDOWN / setterm --powersave powerdown)
+# makes DisplayPort drop its link; the GPU then reports the connector
+# disconnected and never re-trains it, so the monitor is gone from xrandr until
+# the cable is physically re-plugged. Blanking alone is enough to go black.
+blank_console() {
+	local fb
+	for fb in /sys/class/graphics/fb*/blank; do
+		[[ -e "$fb" ]] || continue
+		if [[ "$DRY_RUN" == "1" ]]; then
+			logg "DRY_RUN: would write $CONSOLE_BLANK_MODE (blank) > $fb"
+			continue
+		fi
+		echo "$CONSOLE_BLANK_MODE" >"$fb" 2>/dev/null || logg "WARN: could not blank $fb"
+	done
+	# setterm emits escape sequences on stdout; from a systemd service stdout is
+	# the journal, so aim it at the VT explicitly. --powersave off keeps DPMS out
+	# of it so the DP link survives.
+	if [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would force console blank (no DPMS) on $CONSOLE_TTY"
+	elif [[ -w "$CONSOLE_TTY" ]]; then
+		setterm --term linux --blank force --powersave off \
+			>"$CONSOLE_TTY" 2>/dev/null || logg "WARN: setterm blank failed"
+	fi
+}
+
+mkdir -p "$STATE_DIR"
+
+# 1. Idempotency — entering lockdown when already locked is a safe no-op.
+if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "LOCKED" ]]; then
+	logg "already LOCKED — nothing to do"
+	exit 0
+fi
+
+logg "entering night lockdown"
+
+# 2. RGB off (RAM + board + GPU), remembering the current lighting first.
+#
+#    Do NOT gate this on `openrgb --list-devices`: that call is broken in the
+#    installed openrgb-git build — it returns in ~70ms, before async detection
+#    finishes, so it always reports zero devices. (That false "no controllers"
+#    reading is why this step silently no-op'd.) The fix was to install stable
+#    openrgb 1.0rc3 from extra, whose CLI detects properly (~1.9s) before acting.
+if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
+	run env HOME="$RGB_HOME" openrgb --mode "$RGB_OFF_MODE" --color "$RGB_OFF_COLOR"
+fi
+
+# 2b. Cap CPU/GPU power draw for the night. Save the pre-lockdown values first
+#     so unlock restores exactly what was there, not a hardcoded "default" —
+#     the user may have changed either away from factory settings.
+#     Capture is guarded on the .prev file NOT already existing: this step
+#     runs before state is written LOCKED (step 5), so a kill between here and
+#     there leaves state UNLOCKED and the 30-min curfew check re-invokes this
+#     whole script. Without the guard, that re-run would recapture "prev" from
+#     the already-applied NIGHT value, permanently stranding the machine in
+#     night power-save mode. unlock deletes the .prev file after a successful
+#     restore, so a normal (non-crashed) cycle still captures fresh each night.
+if [[ "$POWER_SAVE_ENABLE" == "1" ]]; then
+	if [[ -f /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference ]]; then
+		if [[ "$DRY_RUN" != "1" && ! -f "$STATE_DIR/cpu_epp.prev" ]]; then
+			cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference \
+				>"$STATE_DIR/cpu_epp.prev" 2>/dev/null || true
+		fi
+		for epp_file in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+			[[ -e "$epp_file" ]] || continue
+			if [[ "$DRY_RUN" == "1" ]]; then
+				logg "DRY_RUN: would write $CPU_EPP_NIGHT > $epp_file"
+			else
+				echo "$CPU_EPP_NIGHT" >"$epp_file" 2>/dev/null || logg "WARN: could not set EPP on $epp_file"
+			fi
+		done
+	fi
+
+	if command -v nvidia-smi >/dev/null 2>&1; then
+		if [[ "$DRY_RUN" != "1" && ! -f "$STATE_DIR/gpu_power_limit_watts.prev" ]]; then
+			nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits \
+				>"$STATE_DIR/gpu_power_limit_watts.prev" 2>/dev/null || true
+		fi
+		if [[ "$DRY_RUN" == "1" ]]; then
+			logg "DRY_RUN: would run: timeout 10 nvidia-smi -pl $GPU_POWER_LIMIT_NIGHT_WATTS"
+		else
+			run timeout 10 nvidia-smi -pl "$GPU_POWER_LIMIT_NIGHT_WATTS"
+		fi
+	fi
+fi
+
+# 3. Mute audio (best-effort). The session teardown below silences apps anyway;
+#    this covers any direct-ALSA sound. PipeWire is intentionally NOT touched, so
+#    the morning unlock cannot be defeated by a persisted wireplumber mute.
+for card in $ALSA_CARDS; do
+	command -v amixer >/dev/null 2>&1 && run amixer -c "$card" -q set Master mute
+done
+
+# 4. Stop GUI-bound user units + tray apps (they die with X anyway; be tidy).
+for unit in $MONITORED_USER_UNITS; do
+	run_as_user systemctl --user stop "$unit"
+done
+for proc in $MONITORED_PROCS; do
+	# Only kill if actually running — pkill exits 1 on no-match, which would log
+	# a misleading "command failed" WARN every night for an app that isn't up.
+	if [[ -n "$LOCK_USER" ]] && pgrep -u "$LOCK_USER" -x "$proc" >/dev/null 2>&1; then
+		run pkill -u "$LOCK_USER" -x "$proc"
+	fi
+done
+
+# 5. Persist the LOCKED intent BEFORE the session-killing teardown. Stopping
+#    lightdm tears down the graphical session that this very process runs in, so
+#    if we wrote state AFTER the teardown, a kill mid-teardown would leave state
+#    at UNLOCKED — and the unlock path (which no-ops when UNLOCKED) would then
+#    fail to restore, stranding the machine. Write intent first; any unlock
+#    (05:00 timer, dead-man, or manual) then correctly restores.
+if [[ "$DRY_RUN" != "1" ]]; then
+	echo LOCKED >"$STATE_FILE"
+	lockdown_epoch="$(date +%s)"
+	echo "$lockdown_epoch" >"$STATE_DIR/locked_at_epoch"
+
+	# 5a. Schedule a one-shot wake-floor trigger for exactly
+	#     lockdown_epoch + MIN_WAKE_AFTER_LOCKDOWN_HOURS. The staggered
+	#     05:00/05:15/05:30/06:00/07:00 unlock triggers are a fixed list sized
+	#     for the usual shutdown hours (~21:00-23:00), but the shutdown hour
+	#     itself is configurable (/etc/shutdown-schedule.conf) and changes
+	#     dynamically (see the sick-day feature). If lockdown ever starts late
+	#     enough that the floor lands after every remaining fixed trigger, the
+	#     alarm would otherwise silently never fire that morning. This
+	#     transient timer fires at the exact floor moment for THIS lockdown
+	#     regardless of what time it actually started, re-running the
+	#     (idempotent, self-dedup'd) unlock script, which is where the alarm
+	#     is actually attempted.
+	floor_epoch=$((lockdown_epoch + MIN_WAKE_AFTER_LOCKDOWN_HOURS * 3600))
+	floor_cal="$(date -d "@$floor_epoch" '+%Y-%m-%d %H:%M:%S')"
+	run systemd-run --unit=night-lockdown-wake-floor --collect \
+		--on-calendar="$floor_cal" /usr/local/bin/night-lockdown-unlock.sh
+else
+	logg "DRY_RUN: would schedule a one-shot wake-floor trigger ~${MIN_WAKE_AFTER_LOCKDOWN_HOURS}h from now"
+fi
+
+# 6a. Silence the console BEFORE stopping the GUI, so the teardown itself
+#     ("Stopping Light Display Manager...") does not print onto the VT.
+silence_console
+
+# 6. Mask the login surface BEFORE stopping the GUI, so logind cannot spawn a
+#    getty into the gap. Mask ONLY getty@.service: autovt@.service is an alias
+#    symlink to it, so masking getty@ already makes autovt@ttyN resolve to
+#    masked ("Unit autovt@ttyN.service is masked" — logind cannot spawn a VT
+#    login). Passing autovt@ to mask instead FAILS ("File
+#    /etc/systemd/system/autovt@.service already exists and is a symlink"),
+#    which is what produced the nightly WARN. Masks are /dev/null symlinks that
+#    persist across reboot; the unlock path unmasks them.
+run systemctl mask getty@.service
+run systemctl stop 'getty@*.service'
+
+# 7. Stop the GUI while continuously re-blanking the console in the
+#    background. Activating a VT (which happens somewhere mid-way through the
+#    GUI stop, not only once "systemctl stop" fully returns) makes fbcon
+#    redraw/unblank as part of the switch, so a single blank-after-the-fact
+#    call leaves a gap showing whatever was last on the console (old
+#    kernel/systemd text) for however long the rest of the stop sequence
+#    takes. Keep forcing it dark for the whole teardown instead of waiting.
+if [[ "$DRY_RUN" != "1" ]]; then
+	(
+		while :; do
+			blank_console
+			sleep 0.1
+		done
+	) &
+	BLANK_POLLER_PID=$!
+fi
+run systemctl stop lightdm.service
+if [[ -n "${BLANK_POLLER_PID:-}" ]]; then
+	kill "$BLANK_POLLER_PID" 2>/dev/null || true
+	wait "$BLANK_POLLER_PID" 2>/dev/null || true
+	unset BLANK_POLLER_PID
+fi
+
+# 8. Final guaranteed blank now that the GUI is fully down.
+blank_console
+
+# 9. Optionally unbind the GPU entirely (default OFF — see GPU_UNBIND_ENABLE
+#    comment in night-lockdown.conf for the risk tradeoff). Only ever runs
+#    after the GUI is torn down, since nothing interactive needs the GPU at
+#    this point. Timeout-guarded: modprobe -r can hang if anything still
+#    references the device, and a hang here must not block the rest of
+#    lockdown.
+if [[ "$GPU_UNBIND_ENABLE" == "1" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+	gpu_pci="$(lspci -d 10de: 2>/dev/null | grep -i 'VGA\|3D' | awk '{print $1}' | head -1)"
+	if [[ -z "$gpu_pci" ]]; then
+		logg "WARN: GPU_UNBIND_ENABLE=1 but no nvidia PCI device found"
+	elif [[ "$DRY_RUN" == "1" ]]; then
+		logg "DRY_RUN: would unload nvidia modules and remove PCI device 0000:$gpu_pci"
+	elif timeout 20 modprobe -r nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>&1 | logger -t night-lockdown; then
+		if echo 1 >"/sys/bus/pci/devices/0000:$gpu_pci/remove" 2>/dev/null; then
+			logg "GPU unbound (0000:$gpu_pci removed from PCI bus)"
+			# Unloading nvidia_drm / the PCI remove can surface a fallback
+			# framebuffer that isn't blanked -- same failure class the
+			# continuous re-blank during the lightdm stop (above) exists to
+			# close, just triggered by module unload instead of a VT switch.
+			blank_console
+		else
+			logg "WARN: modules unloaded but PCI remove failed for 0000:$gpu_pci"
+		fi
+	else
+		logg "WARN: modprobe -r timed out or failed -- GPU left bound, skipping unbind"
+	fi
+fi
+
+logg "night lockdown active — servers up, GUI down, login surface masked, console dark"
