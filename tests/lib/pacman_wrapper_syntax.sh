@@ -31,9 +31,12 @@ pac_tests_wrapper_and_vbox() {
 		exit 1
 	fi
 
+	# The wrapper was split into flat pw_*.sh libs under the 250-line cap, so
+	# these definition checks search the entry script AND its libs: the
+	# functions moved one file over, they did not disappear.
 	# Test 4: Verify integrity check function exists
 	echo "[TEST 4] Verifying integrity check function exists in wrapper..."
-	if grep -q "verify_policy_integrity()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+	if grep -q "verify_policy_integrity()" "$WRAPPER_DIR/pacman_wrapper.sh" "$WRAPPER_DIR"/pw_*.sh; then
 		echo "✓ Integrity verification function found"
 	else
 		echo "✗ Integrity verification function not found"
@@ -42,7 +45,7 @@ pac_tests_wrapper_and_vbox() {
 
 	# Test 5: Verify hardcoded VirtualBox cleanup function exists
 	echo "[TEST 5] Verifying hardcoded VirtualBox cleanup function exists..."
-	if grep -q "auto_remove_virtualbox_vms()" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+	if grep -q "auto_remove_virtualbox_vms()" "$WRAPPER_DIR/pacman_wrapper.sh" "$WRAPPER_DIR"/pw_*.sh; then
 		echo "✓ Hardcoded VirtualBox cleanup function found"
 	else
 		echo "✗ Hardcoded VirtualBox cleanup function not found"
@@ -51,7 +54,7 @@ pac_tests_wrapper_and_vbox() {
 
 	# Test 6: Verify VirtualBox cleanup uses VBoxManage directly
 	echo "[TEST 6] Verifying VirtualBox cleanup uses VBoxManage directly..."
-	if grep -q "VBoxManage" "$WRAPPER_DIR/pacman_wrapper.sh"; then
+	if grep -q "VBoxManage" "$WRAPPER_DIR/pacman_wrapper.sh" "$WRAPPER_DIR"/pw_*.sh; then
 		echo "✓ VirtualBox cleanup logic found"
 	else
 		echo "✗ VirtualBox cleanup logic not found"

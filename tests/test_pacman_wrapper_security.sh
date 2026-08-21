@@ -79,13 +79,15 @@ printf 'ungoogled-chromium-bin\n' >"$FIXTURE_DIR/pacman_whitelist.txt"
 printf '\n' >"$FIXTURE_DIR/pacman_greylist.txt"
 
 {
+	# Both functions moved to pw_policy.sh when the wrapper was split under the
+	# 250-line cap; they are extracted from there now.
 	cat <<'HEADER'
 #!/bin/bash
 set -u
 load_policy_lists() { :; } # is_blocked_package_name calls this; arrays are pre-seeded below instead
 HEADER
-	sed -n '/^function strip_pkgfile_suffix/,/^}/p' "$WRAPPER_DIR/pacman_wrapper.sh"
-	sed -n '/^function is_blocked_package_name/,/^}/p' "$WRAPPER_DIR/pacman_wrapper.sh"
+	sed -n '/^function strip_pkgfile_suffix/,/^}/p' "$WRAPPER_DIR/pw_policy.sh"
+	sed -n '/^function is_blocked_package_name/,/^}/p' "$WRAPPER_DIR/pw_policy.sh"
 	printf 'BLOCKED_KEYWORDS_LIST=(%s)\n' "$(printf "'%s' " "$(cat "$FIXTURE_DIR/pacman_blocked_keywords.txt")")"
 	printf 'WHITELISTED_NAMES_LIST=(%s)\n' "$(printf "'%s' " "$(cat "$FIXTURE_DIR/pacman_whitelist.txt")")"
 	printf 'GREYLISTED_KEYWORDS_LIST=()\n'

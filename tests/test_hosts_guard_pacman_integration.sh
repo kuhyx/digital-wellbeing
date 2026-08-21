@@ -13,13 +13,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 WRAPPER_FILE="$REPO_DIR/scripts/periodic_background/digital_wellbeing/pacman/pacman_wrapper.sh"
+# The wrapper was split into flat pw_*.sh libs under the 250-line cap, so a
+# function-definition check has to search the entry script AND its libs.
+# Grepping the entry script alone reports "not found" for code that simply
+# moved one file over. The call-site ORDER assertions below still target the
+# entry script, where the calls themselves remain.
+WRAPPER_SOURCES=("$WRAPPER_FILE")
+for _pw_lib in "$(dirname "$WRAPPER_FILE")"/pw_*.sh; do
+	[[ -f "$_pw_lib" ]] && WRAPPER_SOURCES+=("$_pw_lib")
+done
 
 assert_contains() {
 	local file_path="$1"
 	local pattern="$2"
 	local message="$3"
 
-	if grep -Fq "$pattern" "$file_path"; then
+	if grep -Fq "$pattern" "$file_path" "${WRAPPER_SOURCES[@]:1}"; then
 		echo "PASS: $message"
 	else
 		echo "FAIL: $message"
