@@ -56,9 +56,22 @@ cp -r "$(dirname "$TARGET_SCRIPT")/lib" "$(dirname "$WORKTREE_SCRIPT")/lib"
 
 # Fail loudly if the copy cannot reach the stub, rather than letting the script
 # fall through to the real library and produce a misleading behavioural failure.
-STUB_FROM_SCRIPT="$(dirname "$WORKTREE_SCRIPT")/../lib/common.sh"
+#
+# The relative prefix is read out of the script rather than written here. It is
+# a function of how deep the script sits below the repo root, so the flattening
+# that moved it from scripts/periodic_background/... up to
+# periodic_background/... changed it from ../lib to ../../lib, and a hardcoded
+# copy of it fails the moment the tree is reorganised again.
+# The source line names SCRIPT_DIR literally; matching it means matching a
+# dollar sign as data. Spelling that byte as \x24 keeps the pattern free of a
+# literal $ so it reads unambiguously as text rather than an expansion.
+SOURCE_REL="$(sed -n "s|.*source \"$(printf '\\x24')SCRIPT_DIR/\(\.\./[^\"]*lib/common\.sh\)\".*|\1|p" "$TARGET_SCRIPT" | head -1)"
+if [[ -z "$SOURCE_REL" ]]; then
+	fail "cannot determine how $TARGET_SCRIPT sources lib/common.sh"
+fi
+STUB_FROM_SCRIPT="$(dirname "$WORKTREE_SCRIPT")/$SOURCE_REL"
 if [[ "$(realpath -m "$STUB_FROM_SCRIPT")" != "$(realpath -m "$WORKTREE_LIB")" ]]; then
-	fail "worktree layout drift: script at $WORKTREE_SCRIPT resolves ../lib/common.sh to $(realpath -m "$STUB_FROM_SCRIPT"), not the stub at $WORKTREE_LIB"
+	fail "worktree layout drift: script at $WORKTREE_SCRIPT resolves $SOURCE_REL to $(realpath -m "$STUB_FROM_SCRIPT"), not the stub at $WORKTREE_LIB"
 fi
 
 cat >"$WORKTREE_LIB" <<'EOF'
