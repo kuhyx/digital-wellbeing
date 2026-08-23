@@ -119,7 +119,7 @@ ensure_periodic_maintenance() {
 		"$self_dir/setup_periodic_system.sh"
 		"$real_home/testsAndMisc/linux_configuration/periodic_background/setup_periodic_system.sh"
 		"$real_home/linux_configuration/periodic_background/setup_periodic_system.sh"
-		"$real_home/linux-configuration/scripts/periodic_background/setup_periodic_system.sh"
+		"$real_home/linux-configuration/periodic_background/setup_periodic_system.sh"
 	)
 	local candidate
 	for candidate in "${setup_candidates[@]}"; do
