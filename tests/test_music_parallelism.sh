@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-TARGET_SCRIPT="$REPO_DIR/scripts/periodic_background/digital_wellbeing/music_parallelism.sh"
+TARGET_SCRIPT="$REPO_DIR/periodic_background/digital_wellbeing/music_parallelism.sh"
 
 fail() {
 	printf 'FAIL: %s\n' "$1" >&2
@@ -42,9 +42,9 @@ if [[ "$TARGET_REL" == "$TARGET_SCRIPT" ]]; then
 	fail "TARGET_SCRIPT ($TARGET_SCRIPT) is not below REPO_DIR ($REPO_DIR)"
 fi
 WORKTREE_SCRIPT="$WORKTREE/$TARGET_REL"
-# The library lives at <repo>/scripts/lib/common.sh; keep it relative to the
+# The library lives at <repo>/lib/common.sh; keep it relative to the
 # same root rather than assuming how deep the script itself is nested.
-WORKTREE_LIB="$WORKTREE/scripts/lib/common.sh"
+WORKTREE_LIB="$WORKTREE/lib/common.sh"
 
 mkdir -p "$(dirname "$WORKTREE_SCRIPT")" "$(dirname "$WORKTREE_LIB")" "$BIN_DIR"
 cp "$TARGET_SCRIPT" "$WORKTREE_SCRIPT"

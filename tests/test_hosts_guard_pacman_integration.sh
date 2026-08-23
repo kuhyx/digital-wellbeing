@@ -12,7 +12,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
-WRAPPER_FILE="$REPO_DIR/scripts/periodic_background/digital_wellbeing/pacman/pacman_wrapper.sh"
+WRAPPER_FILE="$REPO_DIR/periodic_background/digital_wellbeing/pacman/pacman_wrapper.sh"
 # The wrapper was split into flat pw_*.sh libs under the 250-line cap, so a
 # function-definition check has to search the entry script AND its libs.
 # Grepping the entry script alone reports "not found" for code that simply

@@ -19,7 +19,7 @@ if [[ ! -f $TARGET_SCRIPT ]]; then
 	printf 'SKIP: shutdown-timer-monitor.sh not found (set SYSTEM_MAINTENANCE_DIR)\n'
 	exit 0
 fi
-SETUP_SCRIPT="$REPO_DIR/scripts/periodic_background/digital_wellbeing/setup_midnight_shutdown.sh"
+SETUP_SCRIPT="$REPO_DIR/periodic_background/digital_wellbeing/setup_midnight_shutdown.sh"
 # The installer was split into lib/ms_*.sh under the 250-line cap, so these
 # template checks search the entry script AND its libs: the monitor template
 # now lives in lib/ms_monitor.sh, it did not disappear.
@@ -50,8 +50,8 @@ trap cleanup EXIT
 
 WORKTREE="$TMP_DIR/worktree"
 BIN_DIR="$TMP_DIR/bin"
-mkdir -p "$WORKTREE/scripts/system-maintenance/bin" "$BIN_DIR"
-cp "$TARGET_SCRIPT" "$WORKTREE/scripts/system-maintenance/bin/shutdown-timer-monitor.sh"
+mkdir -p "$WORKTREE/system-maintenance/bin" "$BIN_DIR"
+cp "$TARGET_SCRIPT" "$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh"
 
 cat >"$BIN_DIR/busctl" <<'EOF'
 #!/bin/bash
@@ -113,7 +113,7 @@ run_case() {
 	fi
 
 	mode=$(env -i PATH="$BIN_DIR" SLEEP_LOG="$sleep_log" SHUTDOWN_TIMER_MONITOR_SKIP_MAIN=1 /bin/bash -c \
-		"source '$WORKTREE/scripts/system-maintenance/bin/shutdown-timer-monitor.sh'; \
+		"source '$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh'; \
      timer_needs_restoration() { return 1; }; \
      restore_timer() { :; }; \
      monitor_with_dbus() { printf 'dbus'; }; \
@@ -164,7 +164,7 @@ run_dbus_throttle_case() {
       timer_checks=$((timer_checks + 1))
     done < "$COUNTER_FILE"
     printf "%s" "$timer_checks"
-  ' _ "$WORKTREE/scripts/system-maintenance/bin/shutdown-timer-monitor.sh")
+  ' _ "$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh")
 
 	assert_equals "$expected_calls" "$calls" 'monitor_with_dbus should throttle repeated relevant events'
 }
@@ -183,7 +183,7 @@ run_dbus_throttle_case '100 101 102' '3' '0'
 
 printf 'Checking wait helper enforces delay even with /dev/null stdin...\n'
 wait_elapsed=$(env -i PATH="/usr/bin:/bin" SHUTDOWN_TIMER_MONITOR_SKIP_MAIN=1 /bin/bash -c \
-	"source '$WORKTREE/scripts/system-maintenance/bin/shutdown-timer-monitor.sh'; \
+	"source '$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh'; \
    start=\$(printf '%(%s)T' -1); \
    wait_seconds 1; \
    end=\$(printf '%(%s)T' -1); \
