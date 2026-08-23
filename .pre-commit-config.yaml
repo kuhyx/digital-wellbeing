@@ -1,0 +1,40 @@
+# Standalone config for digital-wellbeing, extracted from the testsAndMisc
+# monorepo. The monorepo-specific local hooks (AI evidence/contract gates,
+# python-location, repo-size and directory-depth caps) are absent: they police
+# monorepo invariants that do not exist here.
+#
+# NOTE: the monorepo excluded setup_midnight_shutdown.sh from the two fixer
+# hooks below because it used to be chattr +i. It is NOT immutable any more
+# (verified with lsattr at extraction time), so the exclude is not carried
+# over -- a workaround for a condition that no longer holds.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-executables-have-shebangs
+      - id: check-merge-conflict
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      # No --severity filter, matching the monorepo: every finding shellcheck
+      # reports, down to info and style, fails the commit.
+      - id: shellcheck
+        name: shellcheck
+        entry: bash -c 'printf "%s\0" "$@" | xargs -0 -n 40 shellcheck' --
+        language: system
+        types: [shell]
+        exclude_types: [zsh]
+        # vendor/ is a verbatim copy of the monorepo's shared lib. Fixing its
+        # findings here would fork it from the original for no benefit.
+        exclude: ^vendor/
+
+      - id: unit-tests
+        name: digital-wellbeing tests
+        entry: tests/run_all.sh
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

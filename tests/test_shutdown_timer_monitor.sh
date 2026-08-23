@@ -19,7 +19,7 @@ if [[ ! -f $TARGET_SCRIPT ]]; then
 	printf 'SKIP: shutdown-timer-monitor.sh not found (set SYSTEM_MAINTENANCE_DIR)\n'
 	exit 0
 fi
-SETUP_SCRIPT="$REPO_DIR/periodic_background/digital_wellbeing/setup_midnight_shutdown.sh"
+SETUP_SCRIPT="$REPO_DIR/setup_midnight_shutdown.sh"
 # The installer was split into lib/ms_*.sh under the 250-line cap, so these
 # template checks search the entry script AND its libs: the monitor template
 # now lives in lib/ms_monitor.sh, it did not disappear.

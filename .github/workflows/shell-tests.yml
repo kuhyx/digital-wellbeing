@@ -1,0 +1,31 @@
+name: Shell tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      # vendor/ is excluded: it is a verbatim copy of the monorepo's shared
+      # lib and is linted in its own repo.
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find . -path ./.git -prune -o -path ./vendor -prune -o \
+            -name '*.sh' -print | sort)
+          printf '%s\0' "${files[@]}" | xargs -0 -n 40 shellcheck
+
+      # All six regression suites and the lib/tests splits run bare on Ubuntu:
+      # each was verified to need neither root nor an Arch userland, unlike
+      # the monorepo's arch-tests job that used to host five of them.
+      - name: Run all suites
+        run: ./tests/run_all.sh

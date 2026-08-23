@@ -8,7 +8,7 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PAC_DIR="$SCRIPT_DIR/../periodic_background/digital_wellbeing/pacman"
+PAC_DIR="$SCRIPT_DIR/../pacman"
 LIB="$PAC_DIR/pacman_lock_lib.sh"
 WRAPPER="$PAC_DIR/makepkg_wrapper.sh"
 INSTALLER="$PAC_DIR/install_makepkg_wrapper.sh"
@@ -76,7 +76,7 @@ chmod +x "$STUB"
 # Source the lib once. check_and_handle_db_lock reads $PACMAN_LOCK_FILE at call
 # time, so pointing it at the temp lock before sourcing is enough for all cases.
 export PACMAN_LOCK_FILE="$LOCK"
-# shellcheck source=../periodic_background/digital_wellbeing/pacman/pacman_lock_lib.sh
+# shellcheck source=../pacman/pacman_lock_lib.sh
 source "$LIB"
 
 # orphaned + --noconfirm -> cleared

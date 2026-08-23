@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-TARGET_SCRIPT="$REPO_DIR/periodic_background/digital_wellbeing/music_parallelism.sh"
+TARGET_SCRIPT="$REPO_DIR/music_parallelism.sh"
 
 fail() {
 	printf 'FAIL: %s\n' "$1" >&2
@@ -42,9 +42,10 @@ if [[ "$TARGET_REL" == "$TARGET_SCRIPT" ]]; then
 	fail "TARGET_SCRIPT ($TARGET_SCRIPT) is not below REPO_DIR ($REPO_DIR)"
 fi
 WORKTREE_SCRIPT="$WORKTREE/$TARGET_REL"
-# The library lives at <repo>/lib/common.sh; keep it relative to the
+# The shared library is vendored at <repo>/vendor/common.sh (it lives in the
+# monorepo at linux_configuration/lib/); keep it relative to the
 # same root rather than assuming how deep the script itself is nested.
-WORKTREE_LIB="$WORKTREE/lib/common.sh"
+WORKTREE_LIB="$WORKTREE/vendor/common.sh"
 
 mkdir -p "$(dirname "$WORKTREE_SCRIPT")" "$(dirname "$WORKTREE_LIB")" "$BIN_DIR"
 cp "$TARGET_SCRIPT" "$WORKTREE_SCRIPT"
@@ -61,13 +62,15 @@ cp -r "$(dirname "$TARGET_SCRIPT")/lib" "$(dirname "$WORKTREE_SCRIPT")/lib"
 # a function of how deep the script sits below the repo root, so the flattening
 # that moved it from scripts/periodic_background/... up to
 # periodic_background/... changed it from ../lib to ../../lib, and a hardcoded
-# copy of it fails the moment the tree is reorganised again.
+# copy of it fails the moment the tree is reorganised again. Extraction into
+# this repo put the script AT the root, so the prefix is now empty -- hence the
+# `(\.\./)*` rather than a required `\.\./`.
 # The source line names SCRIPT_DIR literally; matching it means matching a
 # dollar sign as data. Spelling that byte as \x24 keeps the pattern free of a
 # literal $ so it reads unambiguously as text rather than an expansion.
-SOURCE_REL="$(sed -n "s|.*source \"$(printf '\\x24')SCRIPT_DIR/\(\.\./[^\"]*lib/common\.sh\)\".*|\1|p" "$TARGET_SCRIPT" | head -1)"
+SOURCE_REL="$(sed -n "s|.*source \"$(printf '\\x24')SCRIPT_DIR/\(\(\.\./\)*vendor/common\.sh\)\".*|\1|p" "$TARGET_SCRIPT" | head -1)"
 if [[ -z "$SOURCE_REL" ]]; then
-	fail "cannot determine how $TARGET_SCRIPT sources lib/common.sh"
+	fail "cannot determine how $TARGET_SCRIPT sources vendor/common.sh"
 fi
 STUB_FROM_SCRIPT="$(dirname "$WORKTREE_SCRIPT")/$SOURCE_REL"
 if [[ "$(realpath -m "$STUB_FROM_SCRIPT")" != "$(realpath -m "$WORKTREE_LIB")" ]]; then

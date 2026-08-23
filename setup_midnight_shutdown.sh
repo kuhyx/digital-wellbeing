@@ -8,8 +8,8 @@ set -e # Exit on any error
 
 # Source common library for shared functions
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-# shellcheck source=../../lib/common.sh
-source "$SCRIPT_DIR/../../lib/common.sh"
+# shellcheck source=vendor/common.sh
+source "$SCRIPT_DIR/vendor/common.sh"
 
 # The phases live in lib/ms_*.sh. SCRIPT_DIR is resolved with readlink -f
 # above, so this resolves through a symlinked entry point too.

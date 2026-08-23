@@ -48,8 +48,8 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/nl_enter.sh"
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-# shellcheck source=../../lib/common.sh
-source "$SCRIPT_DIR/../../lib/common.sh"
+# shellcheck source=vendor/common.sh
+source "$SCRIPT_DIR/vendor/common.sh"
 
 # --- Installed artifact locations -------------------------------------------
 readonly ENTER_SCRIPT="/usr/local/bin/night-lockdown-enter.sh"
