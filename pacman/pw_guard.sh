@@ -117,8 +117,8 @@ ensure_periodic_maintenance() {
 
 	local -a setup_candidates=(
 		"$self_dir/setup_periodic_system.sh"
-		"$real_home/testsAndMisc/linux_configuration/scripts/periodic_background/setup_periodic_system.sh"
-		"$real_home/linux_configuration/scripts/periodic_background/setup_periodic_system.sh"
+		"$real_home/testsAndMisc/linux_configuration/periodic_background/setup_periodic_system.sh"
+		"$real_home/linux_configuration/periodic_background/setup_periodic_system.sh"
 		"$real_home/linux-configuration/scripts/periodic_background/setup_periodic_system.sh"
 	)
 	local candidate
