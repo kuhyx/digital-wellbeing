@@ -162,7 +162,35 @@ confirm_setup() {
 	echo "- Timer checks every 30 minutes during potential shutdown windows"
 	echo "- There is NO disable option - this is protected by a monitor service"
 	echo ""
-	read -r -p "Do you want to proceed? (y/N): " confirm
+
+	# A bare `read` here fails when stdin is not a terminal, and under `set -e`
+	# that aborted the whole installer on this line -- which is how
+	# install_core_system.sh came to report this module as failed on every
+	# non-interactive run.
+	#
+	# Guarding the read is not enough on its own, because applying the schedule
+	# is effectively IRREVERSIBLE: the ratchet in ms_guard.sh permits only
+	# same-or-stricter values, so a run that silently answered "yes" would
+	# tighten the canonical config with no way back except the unlock flow, and
+	# would discard a deliberate relaxation such as the 23:00 that
+	# screen_locker's sick-day feature writes.
+	#
+	# Refuse rather than guess, in EITHER direction: silently answering "no"
+	# would report success while installing nothing, which is the fail-open path
+	# a wellbeing guard must never take. MIDNIGHT_SHUTDOWN_CONFIRM=y is the
+	# explicit non-interactive opt-in.
+	local confirm="${MIDNIGHT_SHUTDOWN_CONFIRM:-}"
+	if [[ -z $confirm ]]; then
+		if [[ -t 0 ]]; then
+			read -r -p "Do you want to proceed? (y/N): " confirm
+		else
+			echo "No terminal: refusing to apply the shutdown schedule unattended."
+			echo "This change is irreversible (the ratchet allows only stricter"
+			echo "values), so it needs a deliberate answer, not a default."
+			echo "Re-run in a terminal, or set MIDNIGHT_SHUTDOWN_CONFIRM=y."
+			return 1
+		fi
+	fi
 
 	case "$confirm" in
 	[yY] | [yY][eE][sS])
