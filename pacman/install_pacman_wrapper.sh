@@ -1,5 +1,5 @@
 #!/bin/bash
-# filepath: /home/kuhy/linux-configuration/scripts/install_pacman_wrapper.sh
+# filepath: /home/kuhy/src/testsAndMisc/linux_configuration/scripts/install_pacman_wrapper.sh
 #
 # The steps live in lib/; this file owns the paths, the root check, the EXIT
 # trap, the /usr/bin handling and the call order. Two blocks stay here

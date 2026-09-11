@@ -10,7 +10,7 @@ REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 # digital_wellbeing's installer and the monitor it installs still agree. Prefer
 # a sibling checkout, fall back to the installed copy, and skip rather than
 # fail when neither is present -- a missing checkout is not a regression.
-TARGET_SCRIPT="${SYSTEM_MAINTENANCE_DIR:-$HOME/system-maintenance}/bin/shutdown-timer-monitor.sh"
+TARGET_SCRIPT="${SYSTEM_MAINTENANCE_DIR:-$HOME/src/system-maintenance}/bin/shutdown-timer-monitor.sh"
 # Deliberately NOT falling back to /usr/local/bin: the installed copy can be
 # older than the source (it is, on this machine), and testing the installer
 # template against a stale binary compares two things that were never meant to

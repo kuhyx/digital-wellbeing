@@ -12,7 +12,7 @@ Monorepo scripts invoke this repo by absolute path, resolved as
 `<invoking user's home>/digital-wellbeing`:
 
 ```bash
-git clone https://github.com/kuhyx/digital-wellbeing ~/digital-wellbeing
+git clone https://github.com/kuhyx/digital-wellbeing ~/src/digital-wellbeing
 ```
 
 A missing checkout fails loudly with a clone instruction rather than silently
