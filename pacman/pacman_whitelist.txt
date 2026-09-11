@@ -36,6 +36,16 @@ ungoogled-chromium-bin-debug
 # on Thorium; the Gecko build keeps it. The `librewolf` KEYWORD stays blocked,
 # so every other Firefox fork remains barred.
 librewolf
+# Allowed 2026-09-11 so Claude Code can drive a browser on this PC: the
+# Claude-in-Chrome extension is Chrome-only, and without it every OAuth
+# console click and Google consent page (home-guard, punchme, restaurant-rater
+# all hit this) is a manual handoff. Same footing as the entries above:
+# lib/leechblock_browsers.sh already maps google-chrome, so
+# install_leechblock.sh wraps it with --load-extension like every other
+# Chromium build. The `google-chrome` KEYWORD is NOT removed from
+# pacman_blocked_keywords.txt -- only this exact package name is allowed, so
+# google-chrome-beta/-dev/-canary stay barred.
+google-chrome
 minizip
 miniupnpc
 haskell-generically
