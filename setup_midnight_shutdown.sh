@@ -97,6 +97,15 @@ case "${1:-enable}" in
 	check_sudo "$@"
 	show_current_status
 	;;
+"sync-timer")
+	# Regenerate the systemd timer from the LIVE /etc/shutdown-schedule.conf.
+	# Needed whenever something else edits that config (screen_locker's sick-day
+	# feature does), because the timer's OnCalendar list is baked in at install
+	# time and would otherwise keep waking on the old hours. Changes no schedule
+	# value, so it never goes through the ratchet.
+	check_sudo "$@"
+	sync_shutdown_timer
+	;;
 "help" | "-h" | "--help")
 	show_usage
 	;;

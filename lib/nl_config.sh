@@ -13,14 +13,29 @@ detect_alsa_cards() {
 	echo "${cards% }"
 }
 
+# Resolve the CONCRETE display-manager unit name (e.g. lightdm.service), not
+# the display-manager.service alias. systemctl reports Id= as the real unit for
+# either name, and only the real name can be masked: display-manager.service is
+# a symlink under /etc/systemd/system, so masking it fails the same way masking
+# autovt@.service does.
+detect_display_manager_unit() {
+	local id
+	id="$(systemctl show -p Id --value display-manager.service 2>/dev/null || true)"
+	if [[ -z "$id" || "$id" == "display-manager.service" ]]; then
+		id="lightdm.service"
+	fi
+	echo "$id"
+}
+
 # Write /etc/night-lockdown.conf with values detected for THIS machine.
 write_config() {
-	local user uid alsa_cards
+	local user uid alsa_cards dm_unit
 	user="$ACTUAL_USER"
 	uid="$(id -u "$user")"
 	alsa_cards="$(detect_alsa_cards)"
+	dm_unit="$(detect_display_manager_unit)"
 
-	log_info "Writing config to $CONF_FILE (user=$user uid=$uid alsa_cards='$alsa_cards')"
+	log_info "Writing config to $CONF_FILE (user=$user uid=$uid alsa_cards='$alsa_cards' dm=$dm_unit)"
 	cat >"$CONF_FILE" <<EOF
 $MANAGED_BANNER
 # Desktop user whose GUI session is torn down at lockdown.
@@ -53,6 +68,12 @@ MONITORED_USER_UNITS="control-from-mobile.service"
 
 # GUI tray processes (not systemd units) killed at lockdown, space-separated.
 MONITORED_PROCS="aw-qt"
+
+# Display-manager unit masked + stopped at lockdown, unmasked at unlock.
+# Masking (not just stopping) is what makes the curfew survive a power-cycle:
+# a mask is a /dev/null symlink, so booting back up no longer hands the desktop
+# back. Must be the concrete unit name, never the display-manager.service alias.
+DISPLAY_MANAGER_UNIT="$dm_unit"
 
 # Text console to blank at lockdown. Stopping lightdm hands the VT back to fbcon,
 # which unblanks and prints kernel/systemd log spam instead of showing darkness.

@@ -24,6 +24,10 @@ RGB_OFF_COLOR="${RGB_OFF_COLOR:-000000}"
 RGB_HOME="${RGB_HOME:-/root}"
 POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
 GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
+# Must match night-lockdown-enter.sh: that script masks this unit, and a mask
+# is a /dev/null symlink that outlives a reboot. If this name ever disagrees
+# with enter's, the GUI never comes back on its own.
+DISPLAY_MANAGER_UNIT="${DISPLAY_MANAGER_UNIT:-lightdm.service}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
@@ -90,6 +94,10 @@ restore_console() {
 	if [[ -r "$STATE_DIR/printk.prev" ]]; then
 		prev="$(cat "$STATE_DIR/printk.prev")"
 		[[ -n "$prev" ]] && sysctl -q -w "kernel.printk=$prev" 2>/dev/null
+		# Drop it once restored, exactly like cpu_epp.prev / gpu_*.prev:
+		# enter only captures when the file is absent, so leaving a stale copy
+		# here would freeze "prev" at whatever the first-ever night recorded.
+		rm -f "$STATE_DIR/printk.prev"
 	fi
 	kill -s RTMIN+20 1 2>/dev/null || true # systemd: status messages back on
 }
@@ -98,6 +106,11 @@ restore_console
 # 1. Unmask the login surface (undo the persistent /dev/null mask). Only
 #    getty@.service is ever masked; autovt@.service is just an alias to it.
 run systemctl unmask getty@.service
+
+# 1b. Unmask the display manager. enter masks it so a power-cycle cannot hand
+#     the desktop back mid-curfew; without this unmask the GUI would never
+#     return, so the two must always ship together.
+run systemctl unmask "$DISPLAY_MANAGER_UNIT"
 
 # 1a. If the GPU was unbound at lockdown, rescan the PCI bus to bring it back
 #     before starting the GUI. Harmless no-op if nothing was removed. Polls
@@ -127,7 +140,7 @@ if [[ "$GPU_UNBIND_ENABLE" == "1" ]]; then
 fi
 
 # 2. Start the GUI — lightdm autologins back into i3/dwm.
-run systemctl start lightdm.service
+run systemctl start "$DISPLAY_MANAGER_UNIT"
 
 # 2a. Reconnect/reconfigure displays. A DisplayPort link does not always
 #     re-enumerate cleanly on its own after the console teardown, leaving a

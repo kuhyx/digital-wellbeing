@@ -21,7 +21,7 @@ The times above are defaults; actual values in `/etc/shutdown-schedule.conf`.
 │                                                                     │
 │  Layer 1: Systemd Timer                                             │
 │  ─────────────────────                                              │
-│  day-specific-shutdown.timer fires every minute                     │
+│  day-specific-shutdown.timer fires every minute IN the window       │
 │  day-specific-shutdown.service runs the check script                │
 │                                                                     │
 │  Layer 2: Check Script                                              │
@@ -45,8 +45,51 @@ The times above are defaults; actual values in `/etc/shutdown-schedule.conf`.
 │  Setup script blocks making schedule MORE LENIENT                   │
 │  Can only make it STRICTER without the unlock script                │
 │                                                                     │
+│  Layer 6: Power-Cycle Resistance                                    │
+│  ──────────────────────────────                                     │
+│  Lockdown MASKS getty@ and the display manager, it does not just    │
+│  stop them. Masks are /dev/null symlinks, so they outlive a reboot. │
+│  The enter script also re-checks those effects instead of trusting  │
+│  its own state file.                                                │
+│                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Why the lockdown re-checks reality (2026-09-12)
+
+`night-lockdown-enter.sh` used to treat `/var/lib/night-lockdown/state` ==
+`LOCKED` as proof it had nothing to do. The token survives a power-cycle; the
+lockdown did not, because `lightdm` is an enabled unit and came straight back
+at boot. Locked 00:00:04, powered off and on at 00:01, and from then on every
+curfew tick logged "already LOCKED — nothing to do" against a fully usable
+desktop, right through to the 05:00 unlock.
+
+Two changes close it, and they only work together:
+
+- `lockdown_effective()` checks the observable effects (state token **and**
+  `getty@` masked **and** the display manager masked **and** not running) and
+  re-applies on any mismatch. Fail closed, never on a stale promise.
+- The display manager is masked as well as stopped, so a reboot no longer hands
+  the desktop back. `night-lockdown-unlock.sh` unmasks it — never ship one
+  without the other, or the GUI never returns.
+
+### Timer hours come from the live config
+
+`create_shutdown_timer` reads `/etc/shutdown-schedule.conf`, not the
+`SCHEDULE_*` constants in `setup_midnight_shutdown.sh`. Those drift: anything
+that edits the config in place (screen_locker's sick-day feature does) left the
+unit waking on the old hours. On this machine the config said 23:00 while the
+timer's earliest entry was 00:00, so 23:00–00:00 went unenforced nightly.
+
+After anything changes that config, run:
+
+```bash
+sudo ./setup_midnight_shutdown.sh sync-timer
+```
+
+It regenerates only the unit, changes no schedule value, and therefore never
+goes through the ratchet — a full `enable` re-run would compare the repo
+constants against the live config and silently accept the stricter of the two.
 
 ## File Locations
 

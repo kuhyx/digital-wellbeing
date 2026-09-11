@@ -26,6 +26,13 @@ POWER_SAVE_ENABLE="${POWER_SAVE_ENABLE:-1}"
 CPU_EPP_NIGHT="${CPU_EPP_NIGHT:-power}"
 GPU_POWER_LIMIT_NIGHT_WATTS="${GPU_POWER_LIMIT_NIGHT_WATTS:-100}"
 GPU_UNBIND_ENABLE="${GPU_UNBIND_ENABLE:-0}"
+# Display-manager unit to mask + stop. Mask the CONCRETE unit name
+# (lightdm.service), never the display-manager.service alias: that alias is a
+# symlink in /etc/systemd/system, so `systemctl mask display-manager.service`
+# fails exactly the way masking autovt@.service does. Verified on this host:
+# masking lightdm.service makes `systemctl is-enabled display-manager.service`
+# report "masked" too, because they are two Names= of one unit.
+DISPLAY_MANAGER_UNIT="${DISPLAY_MANAGER_UNIT:-lightdm.service}"
 DRY_RUN="${DRY_RUN:-}"
 
 logg() { logger -t night-lockdown "$*"; printf 'night-lockdown: %s\n' "$*"; }
@@ -64,8 +71,14 @@ run_as_user() {
 silence_console() {
 	# systemd status messages ("Starting/Stopped ...") -> off. RTMIN+20 re-enables.
 	run kill -s RTMIN+21 1
-	# Kernel messages -> console. Save the current printk so unlock can restore it.
-	if [[ "$DRY_RUN" != "1" ]]; then
+	# Kernel messages -> console. Save the current printk so unlock can restore
+	# it. Guarded on the .prev file not already existing, for the same reason
+	# cpu_epp.prev and gpu_power_limit_watts.prev are guarded: re-entry is now
+	# possible (see lockdown_effective above), and an unguarded recapture while
+	# printk is already lowered would record the SILENCED value as "prev" and
+	# make the morning restore permanent. unlock deletes the file after a
+	# successful restore, so each normal night still captures fresh.
+	if [[ "$DRY_RUN" != "1" && ! -f "$STATE_DIR/printk.prev" ]]; then
 		cat /proc/sys/kernel/printk >"$STATE_DIR/printk.prev" 2>/dev/null || true
 	fi
 	run sysctl -q -w "kernel.printk=1 4 1 4"
@@ -99,10 +112,32 @@ blank_console() {
 
 mkdir -p "$STATE_DIR"
 
-# 1. Idempotency — entering lockdown when already locked is a safe no-op.
-if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "LOCKED" ]]; then
-	logg "already LOCKED — nothing to do"
+# 1. Idempotency — entering lockdown when already locked is a safe no-op. But
+#    "already locked" has to mean the machine is ACTUALLY locked, not merely
+#    that some earlier run wrote the intent down. The state token survives a
+#    power-cycle; the lockdown itself did not. lightdm is an enabled unit, so a
+#    reboot brought the GUI straight back while state still read LOCKED, and
+#    every later curfew tick then short-circuited on "already LOCKED — nothing
+#    to do". Observed 2026-09-12: locked at 00:00:04, power-cycled at 00:01,
+#    and the desktop was then unenforced until the 05:00 unlock. Verify the
+#    observable effects instead of the token, and re-apply on any mismatch —
+#    fail closed, never on a stale promise.
+lockdown_effective() {
+	[[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "LOCKED" ]] || return 1
+	[[ "$(systemctl is-enabled getty@.service 2>/dev/null)" == "masked" ]] || return 1
+	[[ "$(systemctl is-enabled "$DISPLAY_MANAGER_UNIT" 2>/dev/null)" == "masked" ]] || return 1
+	# A masked-but-still-running DM means the mask landed after the GUI came
+	# back up; that is not enforcement either.
+	! systemctl is-active --quiet "$DISPLAY_MANAGER_UNIT"
+}
+
+if lockdown_effective; then
+	logg "already LOCKED and enforced — nothing to do"
 	exit 0
+fi
+
+if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "LOCKED" ]]; then
+	logg "state says LOCKED but enforcement is NOT in effect (GUI up or masks gone) — re-applying"
 fi
 
 logg "entering night lockdown"
@@ -222,6 +257,15 @@ silence_console
 run systemctl mask getty@.service
 run systemctl stop 'getty@*.service'
 
+# 6b. Mask the display manager too, for exactly the same reason: a mask is a
+#     /dev/null symlink that survives a reboot, a stopped unit does not.
+#     lightdm is enabled, so before this the power button was a complete
+#     bypass — hold it down, boot back up, and graphical.target handed the
+#     desktop back with the curfew still nominally "active". Masking must
+#     happen BEFORE the stop below so nothing (graphical.target, logind) can
+#     race a restart into the gap. night-lockdown-unlock.sh unmasks it.
+run systemctl mask "$DISPLAY_MANAGER_UNIT"
+
 # 7. Stop the GUI while continuously re-blanking the console in the
 #    background. Activating a VT (which happens somewhere mid-way through the
 #    GUI stop, not only once "systemctl stop" fully returns) makes fbcon
@@ -238,7 +282,7 @@ if [[ "$DRY_RUN" != "1" ]]; then
 	) &
 	BLANK_POLLER_PID=$!
 fi
-run systemctl stop lightdm.service
+run systemctl stop "$DISPLAY_MANAGER_UNIT"
 if [[ -n "${BLANK_POLLER_PID:-}" ]]; then
 	kill "$BLANK_POLLER_PID" 2>/dev/null || true
 	wait "$BLANK_POLLER_PID" 2>/dev/null || true

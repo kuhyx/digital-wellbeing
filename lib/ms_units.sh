@@ -82,22 +82,46 @@ EOF
 	echo "✓ Created systemd service: $service_file"
 }
 
-# Function to create the shutdown timer
+# Function to create the shutdown timer.
+#
+# The OnCalendar list is derived from the LIVE config at $CONFIG_FILE, not from
+# this script's SCHEDULE_* constants. Those two drift: the constants say 21, but
+# screen_locker's sick-day feature rewrites /etc/shutdown-schedule.conf in place
+# (it said 23 on 2026-09-11) without regenerating this unit. The installed timer
+# had been generated back when the constant was 24, so its earliest entry was
+# 00:00 and the whole 23:00-00:00 hour was unenforced every single night —
+# the check script was reading 23 while the timer never woke it before midnight.
+# One source of truth: whatever the guarded config currently says.
+#
+# Granularity is every minute inside the window (HH:*:00) rather than :00/:30.
+# The check script is cheap, and a 30-minute tick is 30 minutes of usable
+# machine after any event that drops enforcement (a power-cycle, a failed
+# lock). Outside the window the timer never fires, so the journal stays quiet.
 create_shutdown_timer() {
 	echo ""
 	echo "4. Creating Systemd Shutdown Timer..."
 	echo "==================================="
 
 	local timer_file="/etc/systemd/system/day-specific-shutdown.timer"
+	local mon_wed thu_sun morning_end
+
+	# Read the live, guarded config; fall back to this script's constants only
+	# on a first install where the config does not exist yet.
+	if [[ -r "$CONFIG_FILE" ]]; then
+		mon_wed="$(sed -n 's/^MON_WED_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
+		thu_sun="$(sed -n 's/^THU_SUN_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
+		morning_end="$(sed -n 's/^MORNING_END_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
+	fi
+	mon_wed="${mon_wed:-$SCHEDULE_MON_WED_HOUR}"
+	thu_sun="${thu_sun:-$SCHEDULE_THU_SUN_HOUR}"
+	morning_end="${morning_end:-$SCHEDULE_MORNING_END_HOUR}"
 
 	# Calculate earliest shutdown hour (minimum of MON_WED and THU_SUN)
-	local earliest_hour=$SCHEDULE_MON_WED_HOUR
-	if [[ $SCHEDULE_THU_SUN_HOUR -lt $earliest_hour ]]; then
-		earliest_hour=$SCHEDULE_THU_SUN_HOUR
+	local earliest_hour=$mon_wed
+	if [[ $thu_sun -lt $earliest_hour ]]; then
+		earliest_hour=$thu_sun
 	fi
 
-	# Generate timer entries dynamically from earliest_hour to MORNING_END_HOUR
-	# This ensures timer fires at all possible shutdown times
 	{
 		cat <<EOF
 [Unit]
@@ -106,18 +130,18 @@ Requires=day-specific-shutdown.service
 
 [Timer]
 EOF
-		# Evening hours: from earliest shutdown hour to 23:30
+		# Evening hours: earliest shutdown hour through 23. An hour of 24 means
+		# "midnight", i.e. no evening entries at all — seq handles that by
+		# producing an empty range.
+		local hour
 		for hour in $(seq "$earliest_hour" 23); do
-			printf 'OnCalendar=*-*-* %02d:00:00\n' "$hour"
-			printf 'OnCalendar=*-*-* %02d:30:00\n' "$hour"
+			printf 'OnCalendar=*-*-* %02d:*:00\n' "$hour"
 		done
 
-		# Morning hours: from 00:00 to MORNING_END_HOUR
-		for hour in $(seq 0 "$SCHEDULE_MORNING_END_HOUR"); do
-			printf 'OnCalendar=*-*-* %02d:00:00\n' "$hour"
-			if [[ $hour -lt $SCHEDULE_MORNING_END_HOUR ]]; then
-				printf 'OnCalendar=*-*-* %02d:30:00\n' "$hour"
-			fi
+		# Morning hours: 00:00 up to (not including) MORNING_END_HOUR. At
+		# exactly MORNING_END_HOUR the window is already over, so no entry.
+		for ((hour = 0; hour < morning_end; hour++)); do
+			printf 'OnCalendar=*-*-* %02d:*:00\n' "$hour"
 		done
 
 		cat <<EOF
@@ -132,7 +156,28 @@ EOF
 	} >"$timer_file"
 
 	echo "✓ Created systemd timer: $timer_file"
-	echo "  Timer covers: ${earliest_hour}:00 to 0${SCHEDULE_MORNING_END_HOUR}:00"
+	echo "  Timer covers: ${earliest_hour}:00 to 0${morning_end}:00 (every minute)"
+}
+
+# Regenerate ONLY the timer from the live config, then reload and restart it.
+#
+# Deliberately separate from `enable`: a full re-run goes through the ratchet in
+# check_schedule_protection, which compares this script's SCHEDULE_* constants
+# against the live config and accepts anything same-or-stricter. With constants
+# at 21 and the live config at 23 that would silently move the curfew two hours
+# earlier — a schedule change nobody asked for — just to fix a unit file. This
+# path touches no schedule value at all.
+sync_shutdown_timer() {
+	if [[ ! -r "$CONFIG_FILE" ]]; then
+		echo "Error: $CONFIG_FILE not found - run '$0 enable' first" >&2
+		return 1
+	fi
+
+	create_shutdown_timer
+	systemctl daemon-reload
+	systemctl restart day-specific-shutdown.timer
+	echo "✓ Timer resynced from $CONFIG_FILE and restarted"
+	systemctl list-timers day-specific-shutdown.timer --no-pager | head -3
 }
 
 # Function to create management script
