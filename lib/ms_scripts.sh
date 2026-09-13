@@ -93,41 +93,23 @@ mon_wed_minutes=$((MON_WED_HOUR * 60))
 thu_sun_minutes=$((THU_SUN_HOUR * 60))
 morning_end_minutes=$((MORNING_END_HOUR * 60))
 
-logger -t day-specific-shutdown "Checking shutdown conditions at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1) - Day: $day_name ($day_of_week), Time: $current_hour:$current_minute"
-
-# Determine if we should shutdown based on day and time
+# Determine if we should shutdown based on day and time. Silent outside the
+# window: the timer fires every minute all day, so an out-of-window run must
+# leave nothing in the journal (four lines a minute was 6k lines a day).
 should_shutdown=false
-
 if [[ $day_of_week -ge 1 ]] && [[ $day_of_week -le 3 ]]; then
     # Monday (1), Tuesday (2), Wednesday (3)
     shutdown_start=$mon_wed_minutes
-    logger -t day-specific-shutdown "Today is $day_name - checking ${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00 window"
-
-    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
-        should_shutdown=true
-        if [[ $current_time_minutes -ge $shutdown_start ]]; then
-            logger -t day-specific-shutdown "Time $current_hour:$current_minute is within evening shutdown window (${MON_WED_HOUR}:00-23:59)"
-        else
-            logger -t day-specific-shutdown "Time $current_hour:$current_minute is within morning shutdown window (00:00-0${MORNING_END_HOUR}:00)"
-        fi
-    else
-        logger -t day-specific-shutdown "Time $current_hour:$current_minute is outside shutdown window (${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00)"
-    fi
+    window_label="${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00"
 else
     # Thursday (4), Friday (5), Saturday (6), Sunday (7)
     shutdown_start=$thu_sun_minutes
-    logger -t day-specific-shutdown "Today is $day_name - checking ${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00 window"
+    window_label="${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00"
+fi
 
-    if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
-        should_shutdown=true
-        if [[ $current_time_minutes -ge $shutdown_start ]]; then
-            logger -t day-specific-shutdown "Time $current_hour:$current_minute is within evening shutdown window (${THU_SUN_HOUR}:00-23:59)"
-        else
-            logger -t day-specific-shutdown "Time $current_hour:$current_minute is within morning shutdown window (00:00-0${MORNING_END_HOUR}:00)"
-        fi
-    else
-        logger -t day-specific-shutdown "Time $current_hour:$current_minute is outside shutdown window (${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00)"
-    fi
+if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
+    should_shutdown=true
+    logger -t day-specific-shutdown "$day_name $current_hour:$current_minute is inside the $window_label shutdown window"
 fi
 
 if [[ $should_shutdown == true ]]; then
@@ -146,9 +128,9 @@ if [[ $should_shutdown == true ]]; then
     # `DRY_RUN=1 day-specific-shutdown-check.sh` exercises the path without locking.
     logger -t day-specific-shutdown "Entering night lockdown (servers stay up) via /usr/local/bin/night-lockdown-enter.sh"
     DRY_RUN="${DRY_RUN:-}" /usr/local/bin/night-lockdown-enter.sh
-else
+elif [[ -n "${DRY_RUN:-}" ]]; then
+    # Only a dry run reports the quiet path; the per-minute timer must not.
     printf '%(%Y-%m-%d %H:%M:%S)T: Skipping shutdown - not within shutdown window for %s (current: %s:%s)\n' -1 "$day_name" "$current_hour" "$current_minute"
-    logger -t day-specific-shutdown "Skipped shutdown - not within shutdown window for $day_name (current: $current_hour:$current_minute)"
 fi
 EOF
 

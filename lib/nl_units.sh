@@ -61,6 +61,10 @@ RemainAfterExit=yes
 # sudo run. Detection takes ~2s before it applies. static+black rather than
 # "off": the ZOTAC GPU has no Off mode and the ASRock board ignores it.
 ExecStart=/usr/bin/env HOME=${RGB_HOME_DEFAULT} /usr/bin/openrgb --mode static --color 000000
+# openrgb 1.0-2 applied the colour and then never exited (stuck in a hidraw
+# read); this unit sat in "activating" for the whole uptime holding every
+# /dev/i2c-* open. Bound it: the colour is applied within ~3s or not at all.
+TimeoutStartSec=60
 SuccessExitStatus=0 1
 StandardOutput=journal
 StandardError=journal
@@ -74,7 +78,7 @@ verify_install() {
 	log_info "Verifying installation"
 	local ok=true
 	local path
-	for path in "$ENTER_SCRIPT" "$UNLOCK_SCRIPT" "$CONF_FILE" \
+	for path in "$ENTER_SCRIPT" "$COSMETICS_SCRIPT" "$UNLOCK_SCRIPT" "$CONF_FILE" \
 		"$UNLOCK_SERVICE" "$UNLOCK_TIMER" "$RGB_OFF_SERVICE" "$I2C_MODULES_FILE"; do
 		if [[ -e "$path" ]]; then
 			log_ok "present: $path"

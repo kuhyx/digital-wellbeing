@@ -74,7 +74,19 @@ Before=shutdown.target reboot.target halt.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/day-specific-shutdown-check.sh
-TimeoutStartSec=0
+# Bounded, never 0 (= infinity). On 2026-09-12 the lock action hung inside
+# openrgb; with an infinite start timeout the oneshot sat in "activating" all
+# night and every later per-minute timer tick was a no-op against a live
+# desktop. A hung tick now dies here and the next minute gets a fresh run.
+# The lock action itself finishes in seconds; 180s is generous.
+TimeoutStartSec=180
+# The timer fires every minute all day; without this PID 1 alone would write
+# "Starting/Finished/Deactivated" 4k times a day. notice keeps the check
+# script's own logger(1) lines (user.notice) and drops PID 1's info chatter.
+LogLevelMax=notice
+# ...and stdout/stderr of the check + lock scripts is stamped notice so it
+# survives that cap (the default stamp is info, which would be dropped).
+SyslogLevel=notice
 StandardOutput=journal
 StandardError=journal
 EOF
@@ -84,67 +96,34 @@ EOF
 
 # Function to create the shutdown timer.
 #
-# The OnCalendar list is derived from the LIVE config at $CONFIG_FILE, not from
-# this script's SCHEDULE_* constants. Those two drift: the constants say 21, but
-# screen_locker's sick-day feature rewrites /etc/shutdown-schedule.conf in place
-# (it said 23 on 2026-09-11) without regenerating this unit. The installed timer
-# had been generated back when the constant was 24, so its earliest entry was
-# 00:00 and the whole 23:00-00:00 hour was unenforced every single night —
-# the check script was reading 23 while the timer never woke it before midnight.
-# One source of truth: whatever the guarded config currently says.
+# The timer fires EVERY MINUTE, ALL DAY. The check script is the only thing
+# that knows the window (it reads /etc/shutdown-schedule.conf on every run), so
+# the unit carries no copy of the schedule that could drift from it. Two real
+# drifts motivated this: the timer was once generated from this script's
+# SCHEDULE_* constants while the config said something else (23:00-00:00
+# unenforced every night), and after that was fixed by reading the config at
+# generation time, screen_locker's sick-day feature rewrote the config to 20:00
+# with a timer whose earliest entry was still 23:00 (2026-09-13). Any hour in
+# 0-24 is a legal config value, so the only window that can never be out of
+# date is the whole day. The out-of-window run is fork-free and costs nothing.
 #
-# Granularity is every minute inside the window (HH:*:00) rather than :00/:30.
-# The check script is cheap, and a 30-minute tick is 30 minutes of usable
-# machine after any event that drops enforcement (a power-cycle, a failed
-# lock). Outside the window the timer never fires, so the journal stays quiet.
+# Per-minute granularity matters inside the window too: a 30-minute tick is
+# 30 minutes of usable machine after any event that drops enforcement (a
+# power-cycle, a lock action that timed out).
 create_shutdown_timer() {
 	echo ""
 	echo "4. Creating Systemd Shutdown Timer..."
 	echo "==================================="
 
 	local timer_file="/etc/systemd/system/day-specific-shutdown.timer"
-	local mon_wed thu_sun morning_end
 
-	# Read the live, guarded config; fall back to this script's constants only
-	# on a first install where the config does not exist yet.
-	if [[ -r "$CONFIG_FILE" ]]; then
-		mon_wed="$(sed -n 's/^MON_WED_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
-		thu_sun="$(sed -n 's/^THU_SUN_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
-		morning_end="$(sed -n 's/^MORNING_END_HOUR=\([0-9]\+\).*/\1/p' "$CONFIG_FILE" | tail -1)"
-	fi
-	mon_wed="${mon_wed:-$SCHEDULE_MON_WED_HOUR}"
-	thu_sun="${thu_sun:-$SCHEDULE_THU_SUN_HOUR}"
-	morning_end="${morning_end:-$SCHEDULE_MORNING_END_HOUR}"
-
-	# Calculate earliest shutdown hour (minimum of MON_WED and THU_SUN)
-	local earliest_hour=$mon_wed
-	if [[ $thu_sun -lt $earliest_hour ]]; then
-		earliest_hour=$thu_sun
-	fi
-
-	{
-		cat <<EOF
+	cat >"$timer_file" <<EOF
 [Unit]
 Description=Timer for automatic PC shutdown with day-specific windows
 Requires=day-specific-shutdown.service
 
 [Timer]
-EOF
-		# Evening hours: earliest shutdown hour through 23. An hour of 24 means
-		# "midnight", i.e. no evening entries at all — seq handles that by
-		# producing an empty range.
-		local hour
-		for hour in $(seq "$earliest_hour" 23); do
-			printf 'OnCalendar=*-*-* %02d:*:00\n' "$hour"
-		done
-
-		# Morning hours: 00:00 up to (not including) MORNING_END_HOUR. At
-		# exactly MORNING_END_HOUR the window is already over, so no entry.
-		for ((hour = 0; hour < morning_end; hour++)); do
-			printf 'OnCalendar=*-*-* %02d:*:00\n' "$hour"
-		done
-
-		cat <<EOF
+OnCalendar=*-*-* *:*:00
 Persistent=false
 AccuracySec=1s
 WakeSystem=false
@@ -153,123 +132,33 @@ RandomizedDelaySec=0
 [Install]
 WantedBy=timers.target
 EOF
-	} >"$timer_file"
 
 	echo "✓ Created systemd timer: $timer_file"
-	echo "  Timer covers: ${earliest_hour}:00 to 0${morning_end}:00 (every minute)"
+	echo "  Timer fires every minute; the window comes from $CONFIG_FILE at run time"
 }
 
-# Regenerate ONLY the timer from the live config, then reload and restart it.
+# Regenerate the timer, the service and the check script — everything that is
+# NOT the schedule — then reload and restart the timer.
 #
 # Deliberately separate from `enable`: a full re-run goes through the ratchet in
-# check_schedule_protection, which compares this script's SCHEDULE_* constants
-# against the live config and accepts anything same-or-stricter. With constants
-# at 21 and the live config at 23 that would silently move the curfew two hours
-# earlier — a schedule change nobody asked for — just to fix a unit file. This
-# path touches no schedule value at all.
+# check_schedule_protection and rewrites the guarded config from this script's
+# SCHEDULE_* constants. With constants at 21 and the live config at 20 (a sick
+# day) that would move the curfew — a schedule change nobody asked for — just to
+# ship a unit-file fix. This path touches no schedule value at all, which is
+# what makes it the safe way to deploy a change to the units or the check.
 sync_shutdown_timer() {
 	if [[ ! -r "$CONFIG_FILE" ]]; then
 		echo "Error: $CONFIG_FILE not found - run '$0 enable' first" >&2
 		return 1
 	fi
 
+	create_shutdown_service
 	create_shutdown_timer
+	create_shutdown_check_script
 	systemctl daemon-reload
 	systemctl restart day-specific-shutdown.timer
-	echo "✓ Timer resynced from $CONFIG_FILE and restarted"
+	echo "✓ Units and check script regenerated; schedule in $CONFIG_FILE untouched"
 	systemctl list-timers day-specific-shutdown.timer --no-pager | head -3
-}
-
-# Function to create management script
-create_management_script() {
-	echo ""
-	echo "5. Creating Management Script..."
-	echo "=============================="
-
-	local script_file="/usr/local/bin/day-specific-shutdown-manager.sh"
-
-	cat >"$script_file" <<'EOF'
-#!/bin/bash
-# Day-Specific Auto-Shutdown Manager
-# Provides easy management of the day-specific shutdown feature
-
-TIMER_NAME="day-specific-shutdown.timer"
-SERVICE_NAME="day-specific-shutdown.service"
-CONFIG_FILE="/etc/shutdown-schedule.conf"
-
-# Load config for schedule display
-load_config() {
-    if [[ -f "$CONFIG_FILE" ]]; then
-        # shellcheck source=/dev/null
-        source "$CONFIG_FILE"
-    else
-        echo "Warning: Config file $CONFIG_FILE not found"
-        MON_WED_HOUR="??"
-        THU_SUN_HOUR="??"
-        MORNING_END_HOUR="??"
-    fi
-}
-
-print_schedule() {
-    load_config
-    echo "Shutdown Schedule:"
-    echo "  Monday-Wednesday: ${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00"
-    echo "  Thursday-Sunday:  ${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00"
-}
-
-show_status() {
-    echo "Day-Specific Auto-Shutdown Status"
-    echo "================================="
-
-    if systemctl is-enabled "$TIMER_NAME" &>/dev/null; then
-        echo "Status: ENABLED"
-        if systemctl is-active "$TIMER_NAME" &>/dev/null; then
-            echo "Timer: ACTIVE"
-        else
-            echo "Timer: INACTIVE"
-        fi
-    else
-        echo "Status: NOT ENABLED"
-    fi
-
-    echo ""
-    print_schedule
-
-    echo ""
-    echo "Next scheduled checks:"
-    systemctl list-timers "$TIMER_NAME" --no-pager 2>/dev/null | grep "$TIMER_NAME" || echo "Timer not active"
-
-    echo ""
-    echo "Recent logs:"
-    journalctl -u "$SERVICE_NAME" --no-pager -n 5 2>/dev/null || echo "No recent logs"
-}
-
-case "$1" in
-    "status")
-        show_status
-        ;;
-    "logs")
-        echo "Day-Specific Auto-Shutdown Logs"
-        echo "==============================="
-        journalctl -u "$SERVICE_NAME" --no-pager -n 20
-        ;;
-    *)
-        echo "Day-Specific Auto-Shutdown Manager"
-        echo "Usage: $0 {status|logs}"
-        echo ""
-        echo "Commands:"
-        echo "  status   - Show current status and next shutdown checks"
-        echo "  logs     - Show recent shutdown logs"
-        echo ""
-        print_schedule
-        echo ""
-        show_status
-        ;;
-esac
-EOF
-
-	chmod +x "$script_file"
-	echo "✓ Created management script: $script_file"
 }
 
 # Function to enable the timer

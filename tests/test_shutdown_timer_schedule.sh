@@ -1,12 +1,18 @@
 #!/bin/bash
-# Regression tests for create_shutdown_timer's OnCalendar generation.
+# Regression tests for the shutdown timer + service units.
 #
-# The bug this guards: the timer used to be generated from the SCHEDULE_*
-# constants in setup_midnight_shutdown.sh, while the check script reads
-# /etc/shutdown-schedule.conf. Anything that edits that config in place
-# (screen_locker's sick-day feature does) desynced the two. On this machine the
-# config said 23:00 while the installed timer's earliest entry was 00:00, so
-# 23:00-00:00 was unenforced every night and nothing reported it.
+# The bug this guards: the timer used to carry a copy of the schedule. First it
+# was generated from the SCHEDULE_* constants while the check script read
+# /etc/shutdown-schedule.conf (config said 23:00, timer started at 00:00, and
+# 23:00-00:00 was unenforced every night). Then it was generated from the live
+# config at install time, and screen_locker's sick-day feature rewrote the
+# config to 20:00 under a timer whose earliest entry was still 23:00
+# (2026-09-13). The timer now fires every minute all day and the check script
+# alone decides, so there is no copy left to drift.
+#
+# Second bug: the service had TimeoutStartSec=0 (= infinity). When the lock
+# action hung inside openrgb (2026-09-12) the oneshot sat in "activating" all
+# night and every later timer tick was a no-op against a live desktop.
 
 set -euo pipefail
 
@@ -27,16 +33,18 @@ TMP_DIR=$(mktemp -d)
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
-# Redirect the hardcoded unit path so generation can be inspected as a
+# Redirect the hardcoded unit paths so generation can be inspected as a
 # non-root user.
 UNITS_LIB="$TMP_DIR/ms_units.sh"
 GEN_TIMER="$TMP_DIR/gen.timer"
-sed "s#/etc/systemd/system/day-specific-shutdown.timer#$GEN_TIMER#" \
+GEN_SERVICE="$TMP_DIR/gen.service"
+sed -e "s#/etc/systemd/system/day-specific-shutdown.timer#$GEN_TIMER#" \
+	-e "s#/etc/systemd/system/day-specific-shutdown.service#$GEN_SERVICE#" \
 	"$REPO_DIR/lib/ms_units.sh" >"$UNITS_LIB"
 
-# Generate a timer for the given live-config hours and echo its OnCalendar
-# lines. The SCHEDULE_* constants are deliberately set to a DIFFERENT value
-# than the config, which is exactly the desync that went unnoticed.
+# Generate the units for the given live-config hours. The SCHEDULE_* constants
+# are deliberately set to a DIFFERENT value than the config, which is exactly
+# the desync that went unnoticed; neither may leak into the timer now.
 gen() {
 	local mon_wed="$1" thu_sun="$2" morning_end="$3"
 	printf 'MON_WED_HOUR=%s\nTHU_SUN_HOUR=%s\nMORNING_END_HOUR=%s\n' \
@@ -49,53 +57,47 @@ gen() {
 		# shellcheck source=/dev/null
 		source "$UNITS_LIB"
 		create_shutdown_timer >/dev/null
+		create_shutdown_service >/dev/null
 	)
 	grep '^OnCalendar=' "$GEN_TIMER"
 }
 
-printf '\nthe live config wins over the SCHEDULE_* constants\n'
-out="$(gen 23 23 5)"
-grep -q '^OnCalendar=\*-\*-\* 23:\*:00$' <<<"$out" ||
-	fail "a 23:00 config must produce a 23:00 entry (constants say 21)"
-ok "a 23:00 config produces a 23:00 entry"
-grep -q '^OnCalendar=\*-\*-\* 21:\*:00$' <<<"$out" &&
-	fail "the stale 21 constant must not leak into the unit"
-ok "the stale constant does not leak in"
-
-printf '\nthe whole window is covered, and nothing outside it\n'
-for h in 23 00 01 02 03 04; do
-	grep -q "^OnCalendar=\*-\*-\* $h:\*:00\$" <<<"$out" ||
-		fail "hour $h is inside the 23:00-05:00 window and must be covered"
+printf '\nthe timer fires every minute of every hour, whatever the config says\n'
+for cfg in "23 23 5" "20 20 5" "24 24 5" "18 21 7"; do
+	# shellcheck disable=SC2086 # three space-separated ints by construction
+	out="$(gen $cfg)"
+	[[ "$out" == 'OnCalendar=*-*-* *:*:00' ]] ||
+		fail "config '$cfg' must produce exactly one all-day per-minute entry, got: $out"
 done
-ok "every hour from 23:00 to 04:59 is covered"
-grep -q '^OnCalendar=\*-\*-\* 05:' <<<"$out" &&
-	fail "05:00 is outside the window (MORNING_END_HOUR is exclusive)"
-ok "05:00 is not covered"
-grep -q '^OnCalendar=\*-\*-\* 22:' <<<"$out" &&
-	fail "22:00 is before the shutdown hour and must not fire"
-ok "22:00 is not covered"
+ok "one all-day per-minute entry for every schedule"
+grep -q '21' "$GEN_TIMER" &&
+	fail "the SCHEDULE_* constant must not leak into the unit"
+ok "no schedule value is copied into the timer"
 
-printf '\ngranularity is per-minute, not per-half-hour\n'
-grep -q '^OnCalendar=\*-\*-\* 00:30:00$' <<<"$out" &&
-	fail "the :00/:30 pair left 30 usable minutes after any lapse in enforcement"
-ok "no half-hourly entries remain"
-[[ "$(grep -c ':\*:00$' <<<"$out")" == "$(wc -l <<<"$out")" ]] ||
-	fail "every entry should use the per-minute HH:*:00 form"
-ok "every entry uses the per-minute form"
+printf '\nthe service is bounded, never TimeoutStartSec=0\n'
+grep -q '^TimeoutStartSec=0$' "$GEN_SERVICE" &&
+	fail "TimeoutStartSec=0 is infinity: a hung lock action blocks every later tick"
+ok "no infinite start timeout"
+timeout_s="$(sed -n 's/^TimeoutStartSec=\([0-9]\+\)$/\1/p' "$GEN_SERVICE")"
+[[ -n "$timeout_s" && "$timeout_s" -ge 30 && "$timeout_s" -le 600 ]] ||
+	fail "TimeoutStartSec must be a bounded number of seconds, got '${timeout_s:-unset}'"
+ok "TimeoutStartSec=$timeout_s"
 
-printf '\nthe earliest of the two day-group hours wins\n'
-out="$(gen 21 23 5)"
-grep -q '^OnCalendar=\*-\*-\* 21:\*:00$' <<<"$out" ||
-	fail "Mon-Wed 21:00 is earlier than Thu-Sun 23:00 and must be covered"
-ok "the earlier of the two hours starts the window"
+printf '\nthe per-minute tick does not flood the journal\n'
+grep -q '^LogLevelMax=notice$' "$GEN_SERVICE" ||
+	fail "LogLevelMax=notice is what silences PID 1's per-minute Starting/Finished lines"
+ok "PID 1 chatter is capped"
+grep -q '^SyslogLevel=notice$' "$GEN_SERVICE" ||
+	fail "SyslogLevel=notice keeps the scripts' own stdout above the cap"
+ok "script output survives the cap"
 
-printf '\nan hour of 24 means midnight, i.e. no evening entries\n'
-out="$(gen 24 24 5)"
-grep -q '^OnCalendar=\*-\*-\* 2[0-3]:' <<<"$out" &&
-	fail "a 24:00 schedule must not produce evening entries"
-ok "a 24:00 schedule produces no evening entries"
-grep -q '^OnCalendar=\*-\*-\* 00:\*:00$' <<<"$out" ||
-	fail "a 24:00 schedule still covers the morning half of the window"
-ok "it still covers the morning half"
+printf '\nthe check script is silent outside the window\n'
+CHECK_SRC="$REPO_DIR/lib/ms_scripts.sh"
+grep -q 'Checking shutdown conditions' "$CHECK_SRC" &&
+	fail "an unconditional per-run log line is 1440 journal lines a day"
+ok "no unconditional per-run log line"
+grep -q 'Skipped shutdown - not within' "$CHECK_SRC" &&
+	fail "the out-of-window branch must not log via logger"
+ok "the out-of-window branch is silent"
 
 printf '\ntest_shutdown_timer_schedule: %d passed, 0 failed\n' "$passed"

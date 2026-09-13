@@ -16,4 +16,9 @@ install_enter_script() {
 	# (<<'ENTER_EOF'), so the body was already literal — copying it verbatim is
 	# exactly equivalent. Verified by hashing the emitted result.
 	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-enter.sh.in" "$ENTER_SCRIPT"
+	# The cosmetic phase (RGB, power caps, audio, tray apps) is a separate
+	# script so the enter script can run it as ONE child under `timeout`.
+	# A hang in any of those tools then costs a WARN, never the curfew.
+	log_info "Installing cosmetics phase to $COSMETICS_SCRIPT"
+	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-cosmetics.sh.in" "$COSMETICS_SCRIPT"
 }

@@ -23,6 +23,8 @@ source "$SCRIPT_DIR/lib/ms_scripts.sh"
 source "$SCRIPT_DIR/lib/ms_override_mgr.sh"
 # shellcheck source=lib/ms_monitor.sh
 source "$SCRIPT_DIR/lib/ms_monitor.sh"
+# shellcheck source=lib/ms_manager.sh
+source "$SCRIPT_DIR/lib/ms_manager.sh"
 # shellcheck source=lib/ms_units.sh
 source "$SCRIPT_DIR/lib/ms_units.sh"
 # shellcheck source=lib/ms_report.sh
@@ -98,11 +100,9 @@ case "${1:-enable}" in
 	show_current_status
 	;;
 "sync-timer")
-	# Regenerate the systemd timer from the LIVE /etc/shutdown-schedule.conf.
-	# Needed whenever something else edits that config (screen_locker's sick-day
-	# feature does), because the timer's OnCalendar list is baked in at install
-	# time and would otherwise keep waking on the old hours. Changes no schedule
-	# value, so it never goes through the ratchet.
+	# Regenerate the timer, the service and the check script without touching
+	# /etc/shutdown-schedule.conf: the deploy path for a unit or check-script
+	# change. Never goes through the ratchet, never rewrites the schedule.
 	check_sudo "$@"
 	sync_shutdown_timer
 	;;

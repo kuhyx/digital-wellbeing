@@ -116,8 +116,11 @@ monitor_with_dbus() {
 						continue
 					fi
 					last_check_ts=$now_ts
-					log_message "Systemd event detected for shutdown timer"
+					# Quiet on the happy path: the timer fires every minute, so
+					# an event here is the normal heartbeat, not a signal.
+					# Logging it wrote 13 MB to the monitor log.
 					if timer_needs_restoration; then
+						log_message "Systemd event detected for shutdown timer"
 						restore_timer
 					fi
 				fi

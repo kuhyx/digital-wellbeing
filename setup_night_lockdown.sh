@@ -54,6 +54,7 @@ source "$SCRIPT_DIR/vendor/common.sh"
 # --- Installed artifact locations -------------------------------------------
 readonly ENTER_SCRIPT="/usr/local/bin/night-lockdown-enter.sh"
 readonly UNLOCK_SCRIPT="/usr/local/bin/night-lockdown-unlock.sh"
+readonly COSMETICS_SCRIPT="/usr/local/bin/night-lockdown-cosmetics.sh"
 readonly CONF_FILE="/etc/night-lockdown.conf"
 readonly STATE_DIR="/var/lib/night-lockdown"
 readonly STATE_FILE="$STATE_DIR/state"

@@ -10,7 +10,7 @@ show_usage() {
 	echo "Commands:"
 	echo "  enable      - Set up automatic shutdown with day-specific windows (default)"
 	echo "  status      - Show current status"
-	echo "  sync-timer  - Regenerate the systemd timer from the live config"
+	echo "  sync-timer  - Regenerate the timer, service and check script (schedule untouched)"
 	echo "                (use after anything edits /etc/shutdown-schedule.conf;"
 	echo "                 changes no schedule value, so no ratchet involved)"
 	echo ""

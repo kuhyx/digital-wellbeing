@@ -170,7 +170,7 @@ fi
 
 # 3. Restore audio (unmute the cards muted at lockdown).
 for card in $ALSA_CARDS; do
-	command -v amixer >/dev/null 2>&1 && run amixer -c "$card" -q set Master unmute
+	command -v amixer >/dev/null 2>&1 && run timeout 30 amixer -c "$card" -q set Master unmute
 done
 
 # 3b. Restore CPU EPP and GPU power limit to their pre-lockdown values (saved
@@ -210,16 +210,20 @@ if [[ "$POWER_SAVE_ENABLE" == "1" ]]; then
 	fi
 fi
 
-# 4. Re-assert lights-off rather than restoring anything: the preference is no
-#    lighting at all, ever, so the morning must not turn the RGB back on.
-if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
-	run env HOME="$RGB_HOME" openrgb --mode "$RGB_OFF_MODE" --color "$RGB_OFF_COLOR"
-fi
-
-# 5. Record state BEFORE the (possibly long) alarm wait, so re-fired unlock
-#    triggers dedupe on the state token instead of double-starting things.
+# 4. Record state BEFORE the cosmetic tail, so re-fired unlock triggers
+#    dedupe on the state token instead of double-starting things, and so a
+#    tool that hangs below can never leave the morning half-recorded. In the
+#    vmbox run of 2026-09-13 an unbounded openrgb here kept state at LOCKED
+#    after the GUI was already back, and the next curfew tick re-locked it.
 if [[ "$DRY_RUN" != "1" ]]; then
 	echo UNLOCKED >"$STATE_FILE"
+fi
+
+# 5. Re-assert lights-off rather than restoring anything: the preference is no
+#    lighting at all, ever, so the morning must not turn the RGB back on.
+#    Bounded like every openrgb call: 1.0-2 never returns on this hardware.
+if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
+	run timeout --kill-after=5 30 env HOME="$RGB_HOME" openrgb --mode "$RGB_OFF_MODE" --color "$RGB_OFF_COLOR"
 fi
 
 logg "night lockdown lifted — GUI restored, login surface unmasked"

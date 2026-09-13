@@ -37,6 +37,7 @@ mkdir -p "$STATE_DIR" "$TMP_DIR/bin"
 ENTER="$TMP_DIR/enter.sh"
 sed -e "s#^readonly STATE_DIR=.*#readonly STATE_DIR=\"$STATE_DIR\"#" \
 	-e "s#^readonly CONF_FILE=.*#readonly CONF_FILE=\"$TMP_DIR/night-lockdown.conf\"#" \
+	-e "s#^readonly COSMETICS_SCRIPT=.*#readonly COSMETICS_SCRIPT=\"$TMP_DIR/cosmetics.sh\"#" \
 	"$ENTER_SRC" >"$ENTER"
 chmod +x "$ENTER"
 : >"$TMP_DIR/night-lockdown.conf"
@@ -122,6 +123,18 @@ ok "unlock unmasks the display manager"
 grep -qE '^run systemctl mask .*DISPLAY_MANAGER_UNIT' "$UNLOCK_SRC" &&
 	fail "unlock must never mask the display manager"
 ok "unlock never masks it"
+
+printf '\nno unbounded openrgb call anywhere in the lock/unlock pair\n'
+for src in "$ENTER_SRC" "$UNLOCK_SRC" "$REPO_DIR/lib/payloads/night-lockdown-cosmetics.sh.in"; do
+	grep -nE '^\s*run (env [^ ]+ )?openrgb' "$src" &&
+		fail "$(basename "$src"): openrgb must run under timeout (1.0-2 never returns)"
+done
+ok "every openrgb call is bounded"
+unlock_state_line="$(grep -n 'echo UNLOCKED >' "$UNLOCK_SRC" | cut -d: -f1)"
+unlock_rgb_line="$(grep -n 'openrgb --mode' "$UNLOCK_SRC" | cut -d: -f1)"
+[[ -n "$unlock_state_line" && -n "$unlock_rgb_line" && "$unlock_state_line" -lt "$unlock_rgb_line" ]] ||
+	fail "unlock must record UNLOCKED before its cosmetic tail (state $unlock_state_line vs openrgb $unlock_rgb_line)"
+ok "unlock records UNLOCKED before touching openrgb"
 
 printf '\nprintk capture is guarded so re-entry cannot record the silenced value\n'
 grep -qE '! -f .*STATE_DIR/printk[.]prev' "$ENTER_SRC" ||
