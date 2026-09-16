@@ -17,12 +17,13 @@
 #   3. lightdm is masked AND stopped, getty@ is masked, state is LOCKED
 #   4. enforcement landed BEFORE openrgb was ever called
 #   5. the screen is black
-#   6. unlock brings lightdm back and the screen is no longer black
+#   6. once "now" leaves the window (a registered override, the same signal
+#      a workout credit gives by moving the config hour), the NEXT per-minute
+#      tick lifts the lockdown by itself: lightdm back, screen no longer black
 #
-# Step 6 runs under a registered override, because the guest is still inside
-# the window: a bare unlock there is re-locked by the next per-minute tick,
-# which is correct (`setup_night_lockdown.sh unlock` says so) and is NOT what
-# this step tests. It tests the 05:00 path, which runs outside the window.
+# Step 6 never runs the unlock by hand. Before 2026-09-16 only the 05:00
+# ladder lifted a lockdown, so a workout credited at 20:30 moved the config
+# to 22:00 and the desktop stayed down anyway.
 #
 # The 2026-09-12 failure (openrgb 1.0-2 hanging before the teardown, the unit
 # stuck in "activating" all night) fails step 2 and 3 here.
@@ -143,22 +144,42 @@ locked_mean="$(cat "$TMP_DIR/locked.mean")"
 (( locked_mean < 8 )) || fail "screen is not black after lockdown (mean brightness $locked_mean)"
 ok "screen is black (mean brightness $locked_mean)"
 
-printf '\n== unlock: the morning path restores the desktop\n'
-# Still inside the window, so the next per-minute tick would re-lock a bare
-# unlock (it did, in the first run of this test). Suspend the curfew the way
-# the product does — an entry in the overrides file the check script reads —
-# written directly, because shutdown-override-manager.sh's typed phrase and
-# cool-off delay are friction for a human, not a test fixture. Times come
-# from the guest's pinned clock.
+printf '\n== unlock: leaving the window lifts the lockdown from the per-minute tick\n'
+# Still inside the window. Take "now" out of it the way the product does — an
+# entry in the overrides file the check script reads — written directly,
+# because shutdown-override-manager.sh's typed phrase and cool-off delay are
+# friction for a human, not a test fixture. Times come from the guest's
+# pinned clock. Nothing runs the unlock by hand: the NEXT tick of the
+# installed check script must notice LOCKED-but-outside-the-window and lift
+# it itself. That is the path a workout credited after 20:00 relies on (the
+# config moves past now; before 2026-09-16 nothing lifted the lockdown until
+# 05:00). One tick (<=60s) plus the unlock's own bounded openrgb (30s+5s).
 guest_now="$(probe 'date +%s')"
 guest "echo $guest_now\|$((guest_now + 7200))\|$guest_now\|vmbox-e2e-unlock-phase | sudo tee -a /etc/shutdown-schedule-overrides.conf" >/dev/null ||
 	fail "could not register an override"
 start=$SECONDS
-guest "sudo /usr/local/bin/night-lockdown-unlock.sh" >"$TMP_DIR/unlock.log" || fail "unlock failed"
-unlock_s=$((SECONDS - start))
-(( unlock_s < 90 )) || fail "unlock took ${unlock_s}s: something in it hangs (openrgb?)"
+deadline=$((SECONDS + 150))
+while (( SECONDS < deadline )); do
+	[[ "$(probe 'cat /var/lib/night-lockdown/state')" == UNLOCKED ]] && break
+	sleep 5
+done
+[[ "$(probe 'cat /var/lib/night-lockdown/state')" == UNLOCKED ]] ||
+	fail "the per-minute tick never lifted the lockdown after the window closed"
+lift_s=$((SECONDS - start))
+# UNLOCKED is written before the cosmetic tail on purpose (see the unlock
+# script), so the final line lands up to 35s later: the hung openrgb runs
+# under `timeout --kill-after=5 30`. Wait for it rather than reading the
+# journal the instant the token flips.
+deadline=$((SECONDS + 60))
+while (( SECONDS < deadline )); do
+	guest "sudo journalctl -t day-specific-shutdown -t night-lockdown --no-pager" >"$TMP_DIR/unlock.log"
+	grep -q 'night lockdown lifted' "$TMP_DIR/unlock.log" && break
+	sleep 5
+done
+grep -q 'still LOCKED - lifting night lockdown' "$TMP_DIR/unlock.log" ||
+	fail "the check script did not log the lift branch"
 grep -q 'night lockdown lifted' "$TMP_DIR/unlock.log" || fail "unlock did not reach its final line"
-ok "unlock ran to completion in ${unlock_s}s with the hung openrgb"
+ok "the tick lifted the lockdown on its own in ${lift_s}s with the hung openrgb"
 deadline=$((SECONDS + 90))
 while (( SECONDS < deadline )); do
 	[[ "$(probe 'systemctl is-active lightdm.service')" == active ]] && break

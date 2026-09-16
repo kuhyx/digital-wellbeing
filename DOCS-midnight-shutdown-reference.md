@@ -73,6 +73,17 @@ Two changes close it, and they only work together:
   the desktop back. `night-lockdown-unlock.sh` unmasks it — never ship one
   without the other, or the GUI never returns.
 
+### The lockdown is derived in both directions (2026-09-16)
+
+The per-minute check enters lockdown while `now` is inside the window; it now
+also **lifts** it on any tick that lands outside the window (or under an
+override) while the state token still says `LOCKED`. Before this the only
+way out was the 05:00 unlock ladder: a workout credited at 20:30 moved
+`/etc/shutdown-schedule.conf` to 22:00 and the desktop stayed down anyway.
+The unlock script is idempotent, so the morning ladder and this path cannot
+fight; `tests/test_shutdown_check_lift.sh` pins the branch and
+`tests/vmbox_night_lockdown.sh` step 6 proves it end-to-end in a guest.
+
 ### Timer hours come from the live config
 
 `create_shutdown_timer` reads `/etc/shutdown-schedule.conf`, not the

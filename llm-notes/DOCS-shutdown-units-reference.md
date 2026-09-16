@@ -42,9 +42,13 @@ else
   shutdown_hour=$THU_SUN_HOUR
 fi
 
-# Check if in shutdown window
+# Inside the window: enter night lockdown (idempotent). Outside it: lift a
+# lockdown that is still in effect (idempotent) — the hour can move later
+# mid-evening when a workout is credited, and the desktop must follow.
 if [[ $hour -ge $shutdown_hour ]] || [[ $hour -lt $MORNING_END_HOUR ]]; then
-  systemctl poweroff
+  /usr/local/bin/night-lockdown-enter.sh
+elif [[ "$(cat /var/lib/night-lockdown/state)" == LOCKED ]]; then
+  /usr/local/bin/night-lockdown-unlock.sh
 fi
 ```
 
