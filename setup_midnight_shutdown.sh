@@ -34,10 +34,13 @@ source "$SCRIPT_DIR/lib/ms_setup_flow.sh"
 
 # Schedule constants (single source of truth for this script)
 # These values are written to /etc/shutdown-schedule.conf during setup
-SCHEDULE_MON_WED_HOUR=21
-# Thu-Sun aligned to 21:00 to match the canonical schedule that screen_locker's
-# sick-day feature ratcheted in (was 22); the ratchet only permits same/stricter.
-SCHEDULE_THU_SUN_HOUR=21
+# 19:00 matches screen-locker's BASE_HOUR (20 -> 19 from 2026-10-01, paid for
+# by book-guard's reading hour; workouts, LeetCode and reading push it back up
+# to the 23:00 ceiling). Before that date screen-locker's daily reset writes
+# 20:00 over whatever an install sets, so installing early costs nothing. Both day groups share the base; the ratchet
+# only permits same/stricter, so an install never loosens the live schedule.
+SCHEDULE_MON_WED_HOUR=19
+SCHEDULE_THU_SUN_HOUR=19
 SCHEDULE_MORNING_END_HOUR=5
 
 # ============================================================================
