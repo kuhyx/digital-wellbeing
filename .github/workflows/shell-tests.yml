@@ -12,8 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # ubuntu-latest ships shellcheck; the unconditional apt-get update cost
+      # ~10 s of a ~25 s run. Install only if the image ever drops it.
+      - name: Install shellcheck (only if missing)
+        run: command -v shellcheck || { sudo apt-get update && sudo apt-get install -y shellcheck; }
 
       # vendor/ is excluded: it is a verbatim copy of the monorepo's shared
       # lib and is linted in its own repo.
