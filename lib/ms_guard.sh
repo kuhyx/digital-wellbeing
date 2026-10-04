@@ -9,6 +9,11 @@ canonical_config_path() {
 	fi
 }
 
+# HH:MM for a count of minutes after midnight.
+ms_hhmm() {
+	printf '%02d:%02d' "$(($1 / 60))" "$(($1 % 60))"
+}
+
 validate_minimum_usage_window() {
 	local mon_wed_window thu_sun_window
 	mon_wed_window=$((SCHEDULE_MON_WED_HOUR - SCHEDULE_MORNING_END_HOUR))
@@ -59,13 +64,17 @@ check_schedule_protection() {
 		return 0
 	fi
 
-	# Load canonical values
+	# Load canonical values, in minutes: the *_MINUTES keys when present,
+	# else the legacy whole hours. Unset first so nothing leaks in from the
+	# caller's shell.
 	local canonical_mon_wed canonical_thu_sun canonical_morning_end
+	unset MON_WED_HOUR THU_SUN_HOUR MORNING_END_HOUR \
+		MON_WED_MINUTES THU_SUN_MINUTES MORNING_END_MINUTES
 	# shellcheck source=/dev/null
 	source "$canonical_config" 2>/dev/null || return 0
-	canonical_mon_wed="${MON_WED_HOUR:-}"
-	canonical_thu_sun="${THU_SUN_HOUR:-}"
-	canonical_morning_end="${MORNING_END_HOUR:-}"
+	canonical_mon_wed="${MON_WED_MINUTES:-${MON_WED_HOUR:+$((10#$MON_WED_HOUR * 60))}}"
+	canonical_thu_sun="${THU_SUN_MINUTES:-${THU_SUN_HOUR:+$((10#$THU_SUN_HOUR * 60))}}"
+	canonical_morning_end="${MORNING_END_MINUTES:-${MORNING_END_HOUR:+$((10#$MORNING_END_HOUR * 60))}}"
 
 	# If canonical values are empty, skip check
 	if [[ -z $canonical_mon_wed ]]; then
@@ -78,21 +87,25 @@ check_schedule_protection() {
 		return 0
 	fi
 
+	local new_mon_wed=$((SCHEDULE_MON_WED_HOUR * 60))
+	local new_thu_sun=$((SCHEDULE_THU_SUN_HOUR * 60))
+	local new_morning_end=$((SCHEDULE_MORNING_END_HOUR * 60))
+
 	local violations=()
 
-	# Check if Mon-Wed hour is being made LATER (more lenient)
-	if [[ $SCHEDULE_MON_WED_HOUR -gt $canonical_mon_wed ]]; then
-		violations+=("Mon-Wed shutdown: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (later)")
+	# Check if Mon-Wed shutdown is being made LATER (more lenient)
+	if [[ $new_mon_wed -gt $canonical_mon_wed ]]; then
+		violations+=("Mon-Wed shutdown: $(ms_hhmm "$canonical_mon_wed") → $(ms_hhmm "$new_mon_wed") (later)")
 	fi
 
-	# Check if Thu-Sun hour is being made LATER (more lenient)
-	if [[ $SCHEDULE_THU_SUN_HOUR -gt $canonical_thu_sun ]]; then
-		violations+=("Thu-Sun shutdown: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (later)")
+	# Check if Thu-Sun shutdown is being made LATER (more lenient)
+	if [[ $new_thu_sun -gt $canonical_thu_sun ]]; then
+		violations+=("Thu-Sun shutdown: $(ms_hhmm "$canonical_thu_sun") → $(ms_hhmm "$new_thu_sun") (later)")
 	fi
 
 	# Check if morning end is being made EARLIER (more lenient - shorter shutdown window)
-	if [[ $SCHEDULE_MORNING_END_HOUR -lt $canonical_morning_end ]]; then
-		violations+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (earlier)")
+	if [[ $new_morning_end -lt $canonical_morning_end ]]; then
+		violations+=("Morning end: $(ms_hhmm "$canonical_morning_end") → $(ms_hhmm "$new_morning_end") (earlier)")
 	fi
 
 	if [[ ${#violations[@]} -gt 0 ]]; then
@@ -108,14 +121,14 @@ check_schedule_protection() {
 
 	# Making schedule STRICTER is always allowed
 	local stricter=()
-	if [[ $SCHEDULE_MON_WED_HOUR -lt $canonical_mon_wed ]]; then
-		stricter+=("Mon-Wed: ${canonical_mon_wed}:00 → ${SCHEDULE_MON_WED_HOUR}:00 (earlier)")
+	if [[ $new_mon_wed -lt $canonical_mon_wed ]]; then
+		stricter+=("Mon-Wed: $(ms_hhmm "$canonical_mon_wed") → $(ms_hhmm "$new_mon_wed") (earlier)")
 	fi
-	if [[ $SCHEDULE_THU_SUN_HOUR -lt $canonical_thu_sun ]]; then
-		stricter+=("Thu-Sun: ${canonical_thu_sun}:00 → ${SCHEDULE_THU_SUN_HOUR}:00 (earlier)")
+	if [[ $new_thu_sun -lt $canonical_thu_sun ]]; then
+		stricter+=("Thu-Sun: $(ms_hhmm "$canonical_thu_sun") → $(ms_hhmm "$new_thu_sun") (earlier)")
 	fi
-	if [[ $SCHEDULE_MORNING_END_HOUR -gt $canonical_morning_end ]]; then
-		stricter+=("Morning end: 0${canonical_morning_end}:00 → 0${SCHEDULE_MORNING_END_HOUR}:00 (later)")
+	if [[ $new_morning_end -gt $canonical_morning_end ]]; then
+		stricter+=("Morning end: $(ms_hhmm "$canonical_morning_end") → $(ms_hhmm "$new_morning_end") (later)")
 	fi
 
 	if [[ ${#stricter[@]} -gt 0 ]]; then

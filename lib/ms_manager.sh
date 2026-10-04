@@ -33,11 +33,25 @@ load_config() {
     fi
 }
 
+# HH:MM from a *_MINUTES value, else from a legacy *_HOUR value.
+schedule_hhmm() {
+    local minutes="$1" hour="$2"
+    if [[ "$minutes" =~ ^[0-9]+$ ]]; then
+        printf '%02d:%02d' "$((10#$minutes / 60))" "$((10#$minutes % 60))"
+    elif [[ "$hour" =~ ^[0-9]+$ ]]; then
+        printf '%02d:00' "$((10#$hour))"
+    else
+        printf '??'
+    fi
+}
+
 print_schedule() {
     load_config
+    local morning
+    morning="$(schedule_hhmm "${MORNING_END_MINUTES:-}" "${MORNING_END_HOUR:-}")"
     echo "Shutdown Schedule:"
-    echo "  Monday-Wednesday: ${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00"
-    echo "  Thursday-Sunday:  ${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00"
+    echo "  Monday-Wednesday: $(schedule_hhmm "${MON_WED_MINUTES:-}" "${MON_WED_HOUR:-}")-${morning}"
+    echo "  Thursday-Sunday:  $(schedule_hhmm "${THU_SUN_MINUTES:-}" "${THU_SUN_HOUR:-}")-${morning}"
 }
 
 show_status() {

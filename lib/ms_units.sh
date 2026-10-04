@@ -21,13 +21,20 @@ create_shutdown_config() {
 # attribute, a canonical copy, and a path watcher that auto-restores it
 # if modified outside the sanctioned unlock flow.
 
-# Shutdown hour for Monday-Wednesday (24-hour format)
+# Times are minutes after midnight (1440 = midnight). The *_MINUTES keys are
+# authoritative; the *_HOUR keys are a copy rounded the strict way (evening
+# down, morning up) for readers that predate minutes. Edit both together.
+
+# Shutdown time for Monday-Wednesday
+MON_WED_MINUTES=$((SCHEDULE_MON_WED_HOUR * 60))
 MON_WED_HOUR=${SCHEDULE_MON_WED_HOUR}
 
-# Shutdown hour for Thursday-Sunday (24-hour format)
+# Shutdown time for Thursday-Sunday
+THU_SUN_MINUTES=$((SCHEDULE_THU_SUN_HOUR * 60))
 THU_SUN_HOUR=${SCHEDULE_THU_SUN_HOUR}
 
-# Morning end hour (shutdown window ends at this hour)
+# Morning end (the shutdown window ends at this time)
+MORNING_END_MINUTES=$((SCHEDULE_MORNING_END_HOUR * 60))
 MORNING_END_HOUR=${SCHEDULE_MORNING_END_HOUR}
 EOF
 	)"

@@ -3,7 +3,10 @@
 # This script:
 #   - NO delay if making schedule STRICTER (earlier shutdown hours)
 #   - DELAY if making schedule more LENIENT (later shutdown hours)
-#   - BLOCKS lowering MORNING_END_HOUR (that would shorten the shutdown window)
+#   - BLOCKS an earlier morning end (that would shorten the shutdown window)
+#
+# Values are compared in minutes after midnight: the *_MINUTES keys when
+# present, else the legacy *_HOUR keys times 60.
 
 set -euo pipefail
 
@@ -16,6 +19,40 @@ TEMP_FILE="/tmp/shutdown-schedule-edit.$$"
 
 log() {
     printf '%s - %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE" >&2
+}
+
+# Read FILE's three schedule values, in minutes, into SCHED_MON_WED,
+# SCHED_THU_SUN and SCHED_MORNING_END (empty when absent). The names are
+# unset first: sourcing two files in one shell would otherwise let a key the
+# second file dropped keep the first file's value.
+load_schedule_minutes() {
+    local file="$1"
+    unset MON_WED_HOUR THU_SUN_HOUR MORNING_END_HOUR \
+        MON_WED_MINUTES THU_SUN_MINUTES MORNING_END_MINUTES
+    SCHED_MON_WED="" SCHED_THU_SUN="" SCHED_MORNING_END=""
+    [[ -f "$file" ]] || return 0
+    # shellcheck source=/dev/null
+    source "$file" 2>/dev/null || true
+    SCHED_MON_WED="$(to_minutes "${MON_WED_MINUTES:-}" "${MON_WED_HOUR:-}")"
+    SCHED_THU_SUN="$(to_minutes "${THU_SUN_MINUTES:-}" "${THU_SUN_HOUR:-}")"
+    SCHED_MORNING_END="$(to_minutes "${MORNING_END_MINUTES:-}" "${MORNING_END_HOUR:-}")"
+}
+
+# Minutes from a *_MINUTES value, else a *_HOUR value; empty if neither is a
+# plain integer.
+to_minutes() {
+    local minutes="$1" hour="$2"
+    if [[ "$minutes" =~ ^[0-9]+$ ]]; then
+        printf '%d' "$((10#$minutes))"
+    elif [[ "$hour" =~ ^[0-9]+$ ]]; then
+        printf '%d' "$((10#$hour * 60))"
+    fi
+}
+
+# HH:MM for a minute count, ?? for an empty one.
+hhmm() {
+    [[ -n "$1" ]] || { printf '??'; return 0; }
+    printf '%02d:%02d' "$(($1 / 60))" "$(($1 % 60))"
 }
 
 # Must be root
@@ -34,16 +71,10 @@ fi
 log "=== UNLOCK ATTEMPT by $(logname 2>/dev/null || echo 'unknown') from TTY $(tty 2>/dev/null || echo 'unknown') ==="
 
 # Load current values
-OLD_MON_WED=""
-OLD_THU_SUN=""
-OLD_MORNING_END=""
-if [[ -f "$CANONICAL_FILE" ]]; then
-    # shellcheck source=/dev/null
-    source "$CANONICAL_FILE" 2>/dev/null || true
-    OLD_MON_WED="${MON_WED_HOUR:-}"
-    OLD_THU_SUN="${THU_SUN_HOUR:-}"
-    OLD_MORNING_END="${MORNING_END_HOUR:-}"
-fi
+load_schedule_minutes "$CANONICAL_FILE"
+OLD_MON_WED="$SCHED_MON_WED"
+OLD_THU_SUN="$SCHED_THU_SUN"
+OLD_MORNING_END="$SCHED_MORNING_END"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -51,13 +82,13 @@ echo "║          SHUTDOWN SCHEDULE CONFIG UNLOCK                        ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Current schedule:"
-echo "  Monday-Wednesday: ${OLD_MON_WED:-??}:00 - 0${OLD_MORNING_END:-?}:00"
-echo "  Thursday-Sunday:  ${OLD_THU_SUN:-??}:00 - 0${OLD_MORNING_END:-?}:00"
+echo "  Monday-Wednesday: $(hhmm "$OLD_MON_WED") - $(hhmm "$OLD_MORNING_END")"
+echo "  Thursday-Sunday:  $(hhmm "$OLD_THU_SUN") - $(hhmm "$OLD_MORNING_END")"
 echo ""
 echo "Rules:"
 echo "  ✓ Making shutdown EARLIER (stricter) = No delay"
 echo "  ⏳ Making shutdown LATER (lenient) = ${DELAY_SECONDS}s delay required"
-echo "  ❌ Lowering MORNING_END_HOUR = BLOCKED (would shorten shutdown window)"
+echo "  ❌ Earlier morning end = BLOCKED (would shorten shutdown window)"
 echo ""
 
 # Stop the path watcher temporarily. This is NOT optional: `chattr -i`
@@ -83,38 +114,34 @@ echo ""
 $EDITOR "$TEMP_FILE"
 
 # Load new values from edited file
-NEW_MON_WED=""
-NEW_THU_SUN=""
-NEW_MORNING_END=""
-# shellcheck source=/dev/null
-source "$TEMP_FILE" 2>/dev/null || true
-NEW_MON_WED="${MON_WED_HOUR:-}"
-NEW_THU_SUN="${THU_SUN_HOUR:-}"
-NEW_MORNING_END="${MORNING_END_HOUR:-}"
+load_schedule_minutes "$TEMP_FILE"
+NEW_MON_WED="$SCHED_MON_WED"
+NEW_THU_SUN="$SCHED_THU_SUN"
+NEW_MORNING_END="$SCHED_MORNING_END"
 
 echo ""
 echo "Checking changes..."
 
-# Check for blocked changes (lowering MORNING_END_HOUR)
+# Check for blocked changes (an earlier morning end)
 if [[ -n "$OLD_MORNING_END" ]] && [[ -n "$NEW_MORNING_END" ]]; then
     if [[ "$NEW_MORNING_END" -lt "$OLD_MORNING_END" ]]; then
         echo ""
         echo "╔══════════════════════════════════════════════════════════════════╗"
-        echo "║     ❌ CHANGE BLOCKED - CANNOT LOWER MORNING_END_HOUR ❌        ║"
+        echo "║     ❌ CHANGE BLOCKED - CANNOT MOVE MORNING END EARLIER ❌      ║"
         echo "╚══════════════════════════════════════════════════════════════════╝"
         echo ""
-        echo "You tried to lower MORNING_END_HOUR from $OLD_MORNING_END to $NEW_MORNING_END"
+        echo "You tried to move the morning end from $(hhmm "$OLD_MORNING_END") to $(hhmm "$NEW_MORNING_END")"
         echo "This would SHORTEN the shutdown window, making it more lenient."
         echo ""
         echo "This change is NOT allowed. The shutdown window must end at"
-        echo "0${OLD_MORNING_END}:00 or later."
+        echo "$(hhmm "$OLD_MORNING_END") or later."
         echo ""
         rm -f "$TEMP_FILE"
         # Re-apply protection
         chattr +i "$CONFIG_FILE" 2>/dev/null || true
         chattr +i "$CANONICAL_FILE" 2>/dev/null || true
         systemctl start "guard-file@${GUARD_NAME}.path" 2>/dev/null || true
-        log "BLOCKED: User tried to lower MORNING_END_HOUR from $OLD_MORNING_END to $NEW_MORNING_END"
+        log "BLOCKED: User tried to move the morning end from $(hhmm "$OLD_MORNING_END") to $(hhmm "$NEW_MORNING_END")"
         exit 1
     fi
 fi
@@ -126,14 +153,14 @@ LENIENT_CHANGES=()
 if [[ -n "$OLD_MON_WED" ]] && [[ -n "$NEW_MON_WED" ]]; then
     if [[ "$NEW_MON_WED" -gt "$OLD_MON_WED" ]]; then
         NEEDS_DELAY=true
-        LENIENT_CHANGES+=("Mon-Wed: ${OLD_MON_WED}:00 → ${NEW_MON_WED}:00 (later)")
+        LENIENT_CHANGES+=("Mon-Wed: $(hhmm "$OLD_MON_WED") → $(hhmm "$NEW_MON_WED") (later)")
     fi
 fi
 
 if [[ -n "$OLD_THU_SUN" ]] && [[ -n "$NEW_THU_SUN" ]]; then
     if [[ "$NEW_THU_SUN" -gt "$OLD_THU_SUN" ]]; then
         NEEDS_DELAY=true
-        LENIENT_CHANGES+=("Thu-Sun: ${OLD_THU_SUN}:00 → ${NEW_THU_SUN}:00 (later)")
+        LENIENT_CHANGES+=("Thu-Sun: $(hhmm "$OLD_THU_SUN") → $(hhmm "$NEW_THU_SUN") (later)")
     fi
 fi
 
@@ -142,19 +169,19 @@ STRICTER_CHANGES=()
 
 if [[ -n "$OLD_MON_WED" ]] && [[ -n "$NEW_MON_WED" ]]; then
     if [[ "$NEW_MON_WED" -lt "$OLD_MON_WED" ]]; then
-        STRICTER_CHANGES+=("Mon-Wed: ${OLD_MON_WED}:00 → ${NEW_MON_WED}:00 (earlier)")
+        STRICTER_CHANGES+=("Mon-Wed: $(hhmm "$OLD_MON_WED") → $(hhmm "$NEW_MON_WED") (earlier)")
     fi
 fi
 
 if [[ -n "$OLD_THU_SUN" ]] && [[ -n "$NEW_THU_SUN" ]]; then
     if [[ "$NEW_THU_SUN" -lt "$OLD_THU_SUN" ]]; then
-        STRICTER_CHANGES+=("Thu-Sun: ${OLD_THU_SUN}:00 → ${NEW_THU_SUN}:00 (earlier)")
+        STRICTER_CHANGES+=("Thu-Sun: $(hhmm "$OLD_THU_SUN") → $(hhmm "$NEW_THU_SUN") (earlier)")
     fi
 fi
 
 if [[ -n "$OLD_MORNING_END" ]] && [[ -n "$NEW_MORNING_END" ]]; then
     if [[ "$NEW_MORNING_END" -gt "$OLD_MORNING_END" ]]; then
-        STRICTER_CHANGES+=("Morning end: 0${OLD_MORNING_END}:00 → 0${NEW_MORNING_END}:00 (later = longer window)")
+        STRICTER_CHANGES+=("Morning end: $(hhmm "$OLD_MORNING_END") → $(hhmm "$NEW_MORNING_END") (later = longer window)")
     fi
 fi
 
@@ -217,8 +244,7 @@ echo "✓ Canonical copy updated"
 echo "✓ Path watcher re-enabled"
 echo ""
 echo "New schedule (will take effect on next timer check):"
-# shellcheck source=/dev/null
-source "$CONFIG_FILE" 2>/dev/null || true
-echo "  Monday-Wednesday: ${MON_WED_HOUR:-??}:00 - 0${MORNING_END_HOUR:-?}:00"
-echo "  Thursday-Sunday:  ${THU_SUN_HOUR:-??}:00 - 0${MORNING_END_HOUR:-?}:00"
+load_schedule_minutes "$CONFIG_FILE"
+echo "  Monday-Wednesday: $(hhmm "$SCHED_MON_WED") - $(hhmm "$SCHED_MORNING_END")"
+echo "  Thursday-Sunday:  $(hhmm "$SCHED_THU_SUN") - $(hhmm "$SCHED_MORNING_END")"
 echo ""

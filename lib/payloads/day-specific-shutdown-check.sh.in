@@ -70,19 +70,28 @@ fi
 # shellcheck source=/dev/null
 source "$CONFIG_FILE"
 
-# Validate config
-if [[ -z "${MON_WED_HOUR:-}" ]]; then
+# Validate config. The *_MINUTES keys (minutes after midnight, 1440 =
+# midnight) carry the real schedule; the *_HOUR keys are kept beside them,
+# rounded the strict way, for readers that predate minutes. Prefer minutes,
+# fall back to HOUR*60 for a file written before the migration.
+if [[ -z "${MON_WED_HOUR:-}${MON_WED_MINUTES:-}" ]] ||
+	[[ -z "${THU_SUN_HOUR:-}${THU_SUN_MINUTES:-}" ]] ||
+	[[ -z "${MORNING_END_HOUR:-}${MORNING_END_MINUTES:-}" ]]; then
 	logger -t day-specific-shutdown "ERROR: Config file missing required variables"
 	exit 1
 fi
-if [[ -z "${THU_SUN_HOUR:-}" ]]; then
-	logger -t day-specific-shutdown "ERROR: Config file missing required variables"
-	exit 1
-fi
-if [[ -z "${MORNING_END_HOUR:-}" ]]; then
-    logger -t day-specific-shutdown "ERROR: Config file missing required variables"
-    exit 1
-fi
+mon_wed_minutes=${MON_WED_MINUTES:-$((10#$MON_WED_HOUR * 60))}
+thu_sun_minutes=${THU_SUN_MINUTES:-$((10#$THU_SUN_HOUR * 60))}
+morning_end_minutes=${MORNING_END_MINUTES:-$((10#$MORNING_END_HOUR * 60))}
+for value in "$mon_wed_minutes" "$thu_sun_minutes" "$morning_end_minutes"; do
+	if ! [[ $value =~ ^[0-9]+$ ]] || [[ $((10#$value)) -gt 1440 ]]; then
+		logger -t day-specific-shutdown "ERROR: Config value '$value' is not 0-1440 minutes"
+		exit 1
+	fi
+done
+mon_wed_minutes=$((10#$mon_wed_minutes))
+thu_sun_minutes=$((10#$thu_sun_minutes))
+morning_end_minutes=$((10#$morning_end_minutes))
 
 # Get current time and day (fork-free bash builtins)
 current_hour=$(printf '%(%H)T' -1)
@@ -91,11 +100,6 @@ current_time_minutes=$((10#$current_hour * 60 + 10#$current_minute))
 day_of_week=$(printf '%(%u)T' -1)  # 1=Monday, 7=Sunday
 day_name=$(printf '%(%A)T' -1)
 
-# Calculate minute thresholds from config
-mon_wed_minutes=$((MON_WED_HOUR * 60))
-thu_sun_minutes=$((THU_SUN_HOUR * 60))
-morning_end_minutes=$((MORNING_END_HOUR * 60))
-
 # Determine if we should shutdown based on day and time. Silent outside the
 # window: the timer fires every minute all day, so an out-of-window run must
 # leave nothing in the journal (four lines a minute was 6k lines a day).
@@ -103,12 +107,14 @@ should_shutdown=false
 if [[ $day_of_week -ge 1 ]] && [[ $day_of_week -le 3 ]]; then
     # Monday (1), Tuesday (2), Wednesday (3)
     shutdown_start=$mon_wed_minutes
-    window_label="${MON_WED_HOUR}:00-0${MORNING_END_HOUR}:00"
 else
     # Thursday (4), Friday (5), Saturday (6), Sunday (7)
     shutdown_start=$thu_sun_minutes
-    window_label="${THU_SUN_HOUR}:00-0${MORNING_END_HOUR}:00"
 fi
+# HH:MM-HH:MM for the journal; printf -v, not $(...): no fork per tick.
+printf -v window_label '%02d:%02d-%02d:%02d' \
+    $((shutdown_start / 60)) $((shutdown_start % 60)) \
+    $((morning_end_minutes / 60)) $((morning_end_minutes % 60))
 
 if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
     should_shutdown=true
