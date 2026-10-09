@@ -26,7 +26,6 @@ _t_eq "$hour" "$(get_hour_key)" "two calls in the same hour agree"
 
 printf '\nget_state_file: one file per app, under STATE_DIR\n'
 _t_eq "$STATE_DIR/discord.lastopen" "$(get_state_file discord)" "the state path is derived from the app name"
-_t_eq "$STATE_DIR/discord.running" "$(get_running_file discord)" "the running-state path is separate from the lastopen path"
 
 printf '\nwas_opened_this_hour: the core allow/block decision\n'
 rm -f "$STATE_DIR/discord.lastopen"
@@ -71,33 +70,6 @@ printf '\nblock_app: notifies the user\n'
 block_app discord >/dev/null 2>&1
 _t_has "$(cat "$TEST_TMPDIR/notifications")" "Blocked" "blocking sends a desktop notification"
 
-printf '\nis_autoclose_suspended: only todays marker counts\n'
-rm -f "$STATE_DIR/discord.suspend-autoclose"
-if is_autoclose_suspended discord; then
-	_t_fail "no marker means not suspended"
-else
-	_t_pass "no marker means not suspended"
-fi
-
-printf '%(%Y-%m-%d)T' -1 >"$STATE_DIR/discord.suspend-autoclose"
-if is_autoclose_suspended discord; then
-	_t_pass "todays marker suspends auto-close"
-else
-	_t_fail "todays marker suspends auto-close"
-fi
-
-echo "1999-12-31" >"$STATE_DIR/discord.suspend-autoclose"
-if is_autoclose_suspended discord; then
-	_t_fail "a stale marker must not suspend auto-close"
-else
-	_t_pass "a stale marker does not suspend auto-close"
-fi
-if [[ -f "$STATE_DIR/discord.suspend-autoclose" ]]; then
-	_t_fail "a stale marker is cleaned up on detection"
-else
-	_t_pass "a stale marker is cleaned up on detection"
-fi
-
 printf '\nget_real_binary: only reports a binary once the wrapper is installed\n'
 rm -f "$TEST_TMPDIR/bin/beeper.orig"
 if get_real_binary beeper >/dev/null 2>&1; then
@@ -125,27 +97,5 @@ fi
 # Idempotent: the real script calls it on every wrapper launch.
 ensure_state_dir
 _t_pass "calling it again on an existing directory is harmless"
-
-printf '\ncleanup_stale_running_state: clears state when nothing is running\n'
-running="$(get_running_file discord)"
-echo "999999 123" >"$running"
-# PROCESS_MATCH points at a path no process can match, so this is the
-# "app already exited" case.
-cleanup_stale_running_state discord 2>/dev/null
-if [[ -f $running ]]; then
-	_t_fail "a running-state file for a dead process is removed"
-else
-	_t_pass "a running-state file for a dead process is removed"
-fi
-
-printf '\ncleanup_stale_running_state: no running file is a no-op\n'
-# The early return. It must not fall through to the pgrep path, which on a
-# machine where the app IS running would otherwise be consulted for nothing.
-rm -f "$running"
-if (cleanup_stale_running_state discord); then
-	_t_pass "a missing running-state file returns success without probing"
-else
-	_t_fail "a missing running-state file returns success without probing"
-fi
 
 _t_report "test_cco_state"

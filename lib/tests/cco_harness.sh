@@ -3,8 +3,8 @@
 #
 # Sourced, not executed. Scope: the hour-key/state logic that decides whether an
 # app launch is allowed. Everything that moves system binaries (install_wrapper,
-# uninstall_wrapper, install_all) or kills processes (kill_app, launch_with_timer)
-# is NOT executed here — this machine's beeper/signal/discord wrappers and a live
+# uninstall_wrapper, install_all) is NOT
+# executed here — this machine's beeper/signal/discord wrappers and a live
 # pacman hook depend on those paths, and a test that ran them would rewrite them.
 #
 # STATE_DIR and LOG_FILE were already variables in the pre-split script, so the
@@ -79,10 +79,6 @@ _t_cco_setup() {
 	LOG_FILE="$STATE_DIR/compulsive-block.log"
 	mkdir -p "$STATE_DIR"
 
-	AUTO_CLOSE_TIMEOUT_MINUTES=10
-	AUTO_CLOSE_WARNING_MINUTES=2
-
-	declare -gA APP_TIMEOUT_MINUTES=(["beeper"]=20 ["signal-desktop"]=20)
 	declare -gA APPS=(
 		["beeper"]="$TEST_TMPDIR/bin/beeper"
 		["signal-desktop"]="$TEST_TMPDIR/bin/signal-desktop"
@@ -93,7 +89,6 @@ _t_cco_setup() {
 		["signal-desktop"]="$TEST_TMPDIR/real/signal-desktop"
 		["discord"]="$TEST_TMPDIR/bin/discord.orig"
 	)
-	declare -gA PROCESS_MATCH=(["discord"]="$TEST_TMPDIR/home/.config/discord/")
 
 	mkdir -p "$TEST_TMPDIR/bin" "$TEST_TMPDIR/real"
 
@@ -114,12 +109,8 @@ _t_cco_setup() {
 _t_cco_assert_fixture_complete() {
 	local missing=""
 	[[ -n $LOG_FILE ]] || missing+=" LOG_FILE"
-	[[ -n $AUTO_CLOSE_TIMEOUT_MINUTES ]] || missing+=" AUTO_CLOSE_TIMEOUT_MINUTES"
-	[[ -n $AUTO_CLOSE_WARNING_MINUTES ]] || missing+=" AUTO_CLOSE_WARNING_MINUTES"
 	[[ ${#APPS[@]} -eq 3 ]] || missing+=" APPS"
 	[[ ${#REAL_BINARIES[@]} -eq 3 ]] || missing+=" REAL_BINARIES"
-	[[ ${#APP_TIMEOUT_MINUTES[@]} -eq 2 ]] || missing+=" APP_TIMEOUT_MINUTES"
-	[[ ${#PROCESS_MATCH[@]} -eq 1 ]] || missing+=" PROCESS_MATCH"
 
 	# Call notify() for real rather than probing it with `type -t`: block_app
 	# routes every blocked launch through it, so a fixture whose notify is

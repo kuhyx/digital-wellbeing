@@ -138,29 +138,18 @@ sudo ./block_compulsive_opening.sh uninstall
 
 ```
 2026-02-02 14:30:15 - ALLOWED: discord opened (first time this hour: 2026-02-02-14)
-2026-02-02 14:30:15 - LAUNCHED: discord with PID 12345 (auto-close in 10m)
-2026-02-02 14:38:15 - (notification: "Session will end in 2 minutes")
-2026-02-02 14:40:15 - AUTO-CLOSED: discord (PID 12345) after 10m
+2026-02-02 14:30:15 - LAUNCHED: discord
 2026-02-02 14:45:22 - BLOCKED: discord launch prevented (already opened this hour: 2026-02-02-14)
 2026-02-02 15:01:03 - ALLOWED: discord opened (first time this hour: 2026-02-02-15)
 2026-02-02 15:30:00 - RESET: discord state cleared by user
 ```
 
-## Auto-Close Timer (Session Limit)
+## No Session Limit
 
-Apps are automatically closed after **10 minutes** to prevent indefinite usage:
-
-1. When app launches, a background daemon is spawned
-2. At **8 minutes**: Warning notification "Session will end in 2 minutes"
-3. At **10 minutes**: App is closed with SIGTERM, then SIGKILL if needed
-4. State file `~/.local/state/compulsive-block/<app>.running` tracks PID and start time
-
-**Configuration variables** (in script):
-
-```bash
-AUTO_CLOSE_TIMEOUT_MINUTES=10   # Total session length
-AUTO_CLOSE_WARNING_MINUTES=2     # Warning before close
-```
+The once-per-hour launch gate is the only limit. An allowed launch `exec`s the
+real binary and the app stays open until the user closes it. (A 10/20-minute
+auto-close timer existed until 2026-10-09; it was removed on purpose — do not
+reintroduce it.)
 
 ## Adding a New App
 

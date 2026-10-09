@@ -68,17 +68,6 @@ notify() {
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/compulsive-block"
 LOG_FILE="$STATE_DIR/compulsive-block.log"
 
-# Auto-close timeout in minutes (apps forcefully closed after this)
-AUTO_CLOSE_TIMEOUT_MINUTES=10
-# Warning before auto-close (in minutes before timeout)
-AUTO_CLOSE_WARNING_MINUTES=2
-
-# Per-app timeout overrides (apps not listed use AUTO_CLOSE_TIMEOUT_MINUTES)
-declare -A APP_TIMEOUT_MINUTES=(
-	["beeper"]=20
-	["signal-desktop"]=20
-)
-
 # Apps to limit (name -> binary path)
 # These are the primary wrapper locations (what the user calls)
 declare -A APPS=(
@@ -86,12 +75,6 @@ declare -A APPS=(
 	["signal-desktop"]="/usr/bin/signal-desktop"
 	["discord"]="/usr/bin/discord"
 )
-
-# The wrapper runs as the user ($SUDO_USER unset); the installer runs as root
-# under sudo ($SUDO_USER set) — resolve the same home in both cases.
-_cco_user="${SUDO_USER:-${USER:-$(id -un)}}"
-_cco_home="$(getent passwd "$_cco_user" 2>/dev/null | cut -d: -f6)"
-[[ -n $_cco_home ]] || _cco_home="/home/$_cco_user"
 
 # Actual executable paths (the real binaries to exec after wrapper check)
 # These are where the real code lives
@@ -110,15 +93,6 @@ declare -A REAL_BINARIES=(
 	["beeper"]="/opt/beeper/beepertexts"
 	["signal-desktop"]="/usr/lib/signal-desktop/signal-desktop"
 	["discord"]="/usr/bin/discord.orig"
-)
-
-# Pattern for detecting a RUNNING instance (pgrep -f). Defaults to the exec
-# target, which is right when that target is the app itself. It is wrong when the
-# exec target is a launcher that exec()s away: /usr/bin/discord.orig replaces
-# itself with ~/.config/discord/<app>/Discord, so nothing would ever match
-# ".orig" and the running-state tracking would look stale immediately.
-declare -A PROCESS_MATCH=(
-	["discord"]="$_cco_home/.config/discord/"
 )
 
 # Main entry point
