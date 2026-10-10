@@ -60,8 +60,12 @@ replace_browser_in_place() {
 
 	local load_ext_flag="--load-extension=\"$EXT_PATH\""
 
-	# If already patched, skip (idempotent)
-	if grep -q -- "$load_ext_flag" "$real_bin" 2>/dev/null; then
+	# If already patched, skip (idempotent). The path counts anywhere inside a
+	# quoted --load-extension list: install_ublock.sh and leetcode-guard's
+	# install_nudge_extension.sh comma-join into the same flag, and matching
+	# only the lone-path form made every pacman -S append a second flag --
+	# which Chromium resolves last-wins, dropping every other extension.
+	if grep -qE -- "--load-extension=\"([^\"]*,)?${EXT_PATH//\//\\/}(,[^\"]*)?\"" "$real_bin" 2>/dev/null; then
 		info "$pretty ($bin) already has LeechBlock --load-extension — skipping"
 		found_any=1
 		return
@@ -85,9 +89,13 @@ replace_browser_in_place() {
 				sudo cp -a "$real_bin" "$orig_backup"
 			fi
 
-			# Insert --load-extension right after "exec <command>" on the exec line.
-			# Matches: exec "$real_bin" "$@"  or  exec /path/to/bin $FLAGS "$@"
-			sudo sed -i "s|^exec \(.*\) \"\\\$@\"|exec \1 $load_ext_flag \"\\\$@\"|" "$real_bin"
+			# One --load-extension only (Chromium keeps the last): extend an
+			# existing list on the exec line, else insert a flag before "$@".
+			if grep -qE -- '^exec .*--load-extension="[^"]*"' "$real_bin"; then
+				sudo sed -i -E "/^exec /s|--load-extension=\"([^\"]*)\"|--load-extension=\"\1,${EXT_PATH}\"|" "$real_bin"
+			else
+				sudo sed -i "s|^exec \(.*\) \"\\\$@\"|exec \1 $load_ext_flag \"\\\$@\"|" "$real_bin"
+			fi
 
 			info "✓ $pretty exec line patched with LeechBlock"
 			found_any=1
