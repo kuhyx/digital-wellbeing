@@ -12,8 +12,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-ENTER_SRC="$REPO_DIR/lib/payloads/night-lockdown-enter.sh.in"
-UNLOCK_SRC="$REPO_DIR/lib/payloads/night-lockdown-unlock.sh.in"
+ENTER_SRC="$REPO_DIR/lib/payloads/night-lockdown-enter.sh"
+UNLOCK_SRC="$REPO_DIR/lib/payloads/night-lockdown-unlock.sh"
 
 passed=0
 fail() {
@@ -125,7 +125,7 @@ grep -qE '^run systemctl mask .*DISPLAY_MANAGER_UNIT' "$UNLOCK_SRC" &&
 ok "unlock never masks it"
 
 printf '\nno unbounded openrgb call anywhere in the lock/unlock pair\n'
-for src in "$ENTER_SRC" "$UNLOCK_SRC" "$REPO_DIR/lib/payloads/night-lockdown-cosmetics.sh.in"; do
+for src in "$ENTER_SRC" "$UNLOCK_SRC" "$REPO_DIR/lib/payloads/night-lockdown-cosmetics.sh"; do
 	grep -nE '^\s*run (env [^ ]+ )?openrgb' "$src" &&
 		fail "$(basename "$src"): openrgb must run under timeout (1.0-2 never returns)"
 done

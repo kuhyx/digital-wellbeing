@@ -11,7 +11,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-CHECK_SRC="$REPO_DIR/lib/payloads/day-specific-shutdown-check.sh.in"
+CHECK_SRC="$REPO_DIR/lib/payloads/day-specific-shutdown-check.sh"
 
 passed=0
 fail() {

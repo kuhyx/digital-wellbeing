@@ -15,5 +15,5 @@ install_unlock_script() {
 	# easier to read, lint and diff on its own. The heredoc was quoted
 	# (<<'UNLOCK_EOF'), so the body was already literal — copying it verbatim is
 	# exactly equivalent. Verified by hashing the emitted result.
-	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-unlock.sh.in" "$UNLOCK_SCRIPT"
+	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-unlock.sh" "$UNLOCK_SCRIPT"
 }

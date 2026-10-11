@@ -33,7 +33,7 @@ create_config_guard() {
 	# The unlock script is a verbatim payload file, not an inline heredoc:
 	# the original heredoc was quoted, so its body was already literal, and
 	# inlining it put this lib over the 250-line cap. Same convention as
-	# lib/payloads/night-lockdown-*.sh.in. Equivalence is proven by hashing
+	# lib/payloads/night-lockdown-*.sh. Equivalence is proven by hashing
 	# the emitted file, not by inspection.
 	cat "$_MS_PAYLOAD_DIR/shutdown-config-unlock.sh.in" >"$unlock_script"
 

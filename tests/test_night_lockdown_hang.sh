@@ -15,8 +15,8 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-ENTER_SRC="$REPO_DIR/lib/payloads/night-lockdown-enter.sh.in"
-COSMETICS_SRC="$REPO_DIR/lib/payloads/night-lockdown-cosmetics.sh.in"
+ENTER_SRC="$REPO_DIR/lib/payloads/night-lockdown-enter.sh"
+COSMETICS_SRC="$REPO_DIR/lib/payloads/night-lockdown-cosmetics.sh"
 
 passed=0
 fail() {
