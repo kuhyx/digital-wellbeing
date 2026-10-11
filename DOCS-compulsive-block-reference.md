@@ -93,12 +93,18 @@ When `install_all()` runs:
 
 ## Pacman Hook
 
-After beeper/signal/discord package updates, the hook re-wraps them:
+After beeper/signal/discord package updates, the hook re-wraps them. After a
+package REMOVAL it prunes the leftovers instead: pacman deletes the wrapper on
+the package's path but not `/usr/bin/<app>.orig` (the real launcher), so any
+`.orig` whose `/usr/bin/<app>` no installed package owns (checked against
+`/var/lib/pacman/local/*/files`, never by calling pacman) is deleted, along
+with a dangling wrapper. `install` applies the same prune.
 
 ```ini
 [Trigger]
 Operation = Upgrade
 Operation = Install
+Operation = Remove
 Type = Package
 Target = beeper
 Target = signal-desktop

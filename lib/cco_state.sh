@@ -84,3 +84,39 @@ get_real_binary() {
 
 	return 1
 }
+
+# Does any installed package own <abs-path>? Reads pacman's local db directly
+# instead of `pacman -Qqo`: this runs inside a pacman hook, /usr/bin/pacman is
+# kuhy's wrapper, and the hooks are kept file-ops-only. grep's exit codes are
+# the answer: 0 owned, 1 unowned, 2 undeterminable (no/unreadable db).
+pkg_owns_path() {
+	local db="${CCO_PACMAN_LOCAL_DB:-/var/lib/pacman/local}"
+	local lists=("$db"/*/files)
+	[[ -e ${lists[0]} ]] || return 2
+	local rc=0
+	grep -qxF -- "${1#/}" "${lists[@]}" 2>/dev/null || rc=$?
+	return "$rc"
+}
+
+# Remove the leftovers of an app whose package was REMOVED. pacman deletes the
+# file on its own path (our wrapper) but never knew about <app>.orig, which is
+# the real launcher, so `<app>.orig` would bypass the blocker forever. Only a
+# definite "unowned" prunes: an undeterminable db keeps the files, because
+# deleting the .orig of a still-installed app breaks launching it.
+# Returns 0 when something stale was removed, 1 otherwise. Idempotent.
+prune_stale_wrapper() {
+	local app="$1"
+	local wrapper_path="${APPS[$app]}"
+	local orig="${wrapper_path}.orig"
+	[[ -e $orig || -L $orig ]] || return 1
+	local rc=0
+	pkg_owns_path "$wrapper_path" || rc=$?
+	((rc == 1)) || return 1
+	rm -f "$orig"
+	# A wrapper left on the path would exec a .orig that no longer exists.
+	if grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
+		rm -f "$wrapper_path"
+	fi
+	log_message "PRUNE: $app package removed, deleted stale $orig"
+	return 0
+}

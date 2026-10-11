@@ -9,6 +9,11 @@ install_wrapper() {
 	local wrapper_path="${APPS[$app]}"
 	local real_binary="${REAL_BINARIES[$app]}"
 
+	if prune_stale_wrapper "$app"; then
+		echo "  ✗ $app package removed: deleted stale ${wrapper_path}.orig"
+		return 1
+	fi
+
 	# Check if already wrapped: .orig must exist AND current file must be our wrapper
 	if [[ -f "${wrapper_path}.orig" ]]; then
 		if grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
@@ -157,7 +162,7 @@ install_all() {
 
 # Install pacman hook to re-install wrappers after package updates
 install_pacman_hook() {
-	local hook_dir="/etc/pacman.d/hooks"
+	local hook_dir="${CCO_HOOK_DIR:-/etc/pacman.d/hooks}"
 	local hook_file="$hook_dir/95-compulsive-block-rewrap.hook"
 
 	echo ""
@@ -165,10 +170,12 @@ install_pacman_hook() {
 
 	mkdir -p "$hook_dir"
 
+	# Remove too: rewrap-quiet then prunes the .orig a removal leaves behind.
 	cat >"$hook_file" <<'HOOK_EOF'
 [Trigger]
 Operation = Upgrade
 Operation = Install
+Operation = Remove
 Type = Package
 Target = beeper
 Target = signal-desktop
@@ -182,7 +189,7 @@ HOOK_EOF
 
 	chmod 644 "$hook_file"
 	echo "✓ Pacman hook installed: $hook_file"
-	echo "  Wrappers will be automatically re-installed after beeper/signal/discord updates"
+	echo "  Wrappers will be automatically re-installed after beeper/signal/discord updates, pruned after removals"
 }
 
 # Uninstall pacman hook
@@ -196,10 +203,14 @@ uninstall_pacman_hook() {
 
 # Quietly re-wrap apps (for pacman hook - no interactive output)
 rewrap_quiet() {
+	ensure_state_dir # else `>>"$LOG_FILE"` below fails and SKIPS install_wrapper
 	log_message "REWRAP: Pacman hook triggered, re-installing wrappers"
 
 	for app in "${!APPS[@]}"; do
 		local wrapper_path="${APPS[$app]}"
+
+		# A removed package leaves nothing to wrap, only a bypass to delete.
+		prune_stale_wrapper "$app" && continue
 
 		# Re-wrap if wrapper is missing or was overwritten by a package update
 		if [[ ! -f "${wrapper_path}.orig" ]] || ! grep -q "block-compulsive-opening" "$wrapper_path" 2>/dev/null; then
