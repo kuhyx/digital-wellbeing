@@ -1,45 +1,6 @@
 #!/usr/bin/env bash
 # Helpers sourced by the entry script.
 
-# Generic function to remove installed packages matching a filter
-# Args: check_function label_prefix
-function remove_installed_packages_matching() {
-	local check_function="$1"
-	local label="$2"
-
-	mapfile -t installed_names < <("$PACMAN_BIN" -Qq 2>/dev/null)
-	local to_remove=()
-	for name in "${installed_names[@]}"; do
-		if "$check_function" "$name"; then
-			to_remove+=("$name")
-		fi
-	done
-
-	if [[ ${#to_remove[@]} -eq 0 ]]; then
-		return 0
-	fi
-
-	echo -e "${YELLOW}${label} cleanup:${NC} Removing packages: ${BOLD}${to_remove[*]}${NC}" >&2
-	"$PACMAN_BIN" -Rns --noconfirm "${to_remove[@]}"
-	local rc=$?
-	if [[ $rc -ne 0 ]]; then
-		echo -e "${RED}${label} cleanup removal failed with exit code ${rc}.${NC}" >&2
-	else
-		echo -e "${GREEN}${label} cleanup removal completed for: ${to_remove[*]}${NC}" >&2
-	fi
-	return $rc
-}
-
-# Cleanup: remove any installed blocked packages
-function remove_installed_blocked_packages() {
-	remove_installed_packages_matching is_blocked_package_name "Policy"
-}
-
-# Cleanup: remove any installed greylisted packages
-function remove_installed_greylisted_packages() {
-	remove_installed_packages_matching is_greylisted_package_name "Greylist"
-}
-
 # Auto-install LeechBlock if a browser is detected
 auto_install_leechblock() {
 	# Only check after install operations

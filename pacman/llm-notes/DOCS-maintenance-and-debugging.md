@@ -36,7 +36,7 @@ ls -la /usr/bin/pacman.orig
 
 ```bash
 cat /var/lib/pacman-wrapper/policy.sha256
-sha256sum /path/to/pacman_blocked_keywords.txt
+sha256sum /usr/local/bin/pacman_lock_lib.sh /usr/local/bin/pw_*.sh
 # Hashes should match
 ```
 

@@ -19,8 +19,6 @@ write_policy_integrity_file() {
 
 	# Ensure all critical policy files exist before checksumming
 	missing_files=()
-	[[ ! -f "$BLOCKED_DEST" ]] && missing_files+=("$BLOCKED_DEST")
-	[[ ! -f "$GREYLIST_DEST" ]] && missing_files+=("$GREYLIST_DEST")
 	[[ ! -f "$LOCK_LIB_DEST" ]] && missing_files+=("$LOCK_LIB_DEST")
 
 	if [[ ${#missing_files[@]} -gt 0 ]]; then
@@ -31,14 +29,6 @@ write_policy_integrity_file() {
 	fi
 
 	{
-		sha256sum "$BLOCKED_DEST" || {
-			echo -e "${RED}Failed to checksum blocked list${NC}" >&2
-			exit 1
-		}
-		sha256sum "$GREYLIST_DEST" || {
-			echo -e "${RED}Failed to checksum greylist${NC}" >&2
-			exit 1
-		}
 		# The shared stale-lock library is executed (sourced) by the wrapper, so it is
 		# integrity-checked too: pacman_wrapper.sh sources it only AFTER
 		# verify_policy_integrity passes, so a tampered lib is rejected before it runs.
@@ -58,13 +48,6 @@ write_policy_integrity_file() {
 				exit 1
 			}
 		done
-		# Whitelist is optional
-		if [[ -f "$WHITELIST_DEST" ]]; then
-			sha256sum "$WHITELIST_DEST" || {
-				echo -e "${RED}Failed to checksum whitelist${NC}" >&2
-				exit 1
-			}
-		fi
 	} >"$INTEGRITY_FILE"
 
 	# Verify integrity file was created and has content
@@ -100,9 +83,7 @@ write_drift_manifest() {
 	# failures, the checker would read that as drift, and it would reinstall on
 	# every single hourly run forever.
 	manifest_sources=()
-	for src in "$WRAPPER_SOURCE" "$LOCK_LIB_SOURCE" "$BLOCKED_SOURCE" "$GREYLIST_SOURCE" \
-		"$MAKEPKG_CAPPED_SOURCE" "$MKPKG_SOURCE" "$WHITELIST_SOURCE"; do
-		[[ -f "$src" ]] || continue # whitelist is optional
+	for src in "$WRAPPER_SOURCE" "$LOCK_LIB_SOURCE" "$MAKEPKG_CAPPED_SOURCE" "$MKPKG_SOURCE"; do
 		manifest_sources+=("$(readlink -f "$src")")
 	done
 

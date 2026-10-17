@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copies the wrapper, policy lists and helper scripts into /usr/local/bin.
+# Copies the wrapper and helper scripts into /usr/local/bin.
 # Sourced by install_pacman_wrapper.sh; inherits the caller's strict mode.
 
 install_managed_files() {
@@ -23,9 +23,6 @@ install_managed_files() {
 		chmod 644 "${INSTALL_DIR}/${pw_lib}.sh"
 	done
 	copy_managed_file "$WORDS_SOURCE" "$WORDS_DEST" required "words list"
-	copy_managed_file "$BLOCKED_SOURCE" "$BLOCKED_DEST" required "blocked keywords list"
-	copy_managed_file "$WHITELIST_SOURCE" "$WHITELIST_DEST" optional "whitelist"
-	copy_managed_file "$GREYLIST_SOURCE" "$GREYLIST_DEST" required "greylist"
 	chmod +x "$WRAPPER_DEST"
 	copy_managed_file "$MAKEPKG_CAPPED_SOURCE" "$MAKEPKG_CAPPED_DEST" required "makepkg capped wrapper"
 	chmod +x "$MAKEPKG_CAPPED_DEST"
@@ -36,5 +33,19 @@ install_managed_files() {
 	# of a repo checkout that may move.
 	copy_managed_file "$HEAVY_LOCK_SOURCE" "$HEAVY_LOCK_DEST" required "heavy-job lock library"
 	chmod 755 "$HEAVY_LOCK_DEST"
-	chmod 644 "$WORDS_DEST" "$BLOCKED_DEST" "$WHITELIST_DEST" "$GREYLIST_DEST" 2>/dev/null || true
+	chmod 644 "$WORDS_DEST"
+	remove_retired_policy_files
+}
+
+# The package policy lists (blocked keywords, whitelist, greylist) were retired
+# on 2026-10-17: hosts/DNS blocking now covers what they guarded. Earlier
+# installs left copies here, the greylist chattr +i, so unlock before deleting.
+remove_retired_policy_files() {
+	local retired
+	for retired in pacman_blocked_keywords.txt pacman_whitelist.txt pacman_greylist.txt; do
+		[[ -e "${INSTALL_DIR}/${retired}" ]] || continue
+		unlock_immutable_file_if_needed "${INSTALL_DIR}/${retired}"
+		rm -f "${INSTALL_DIR}/${retired}"
+		echo -e "${BLUE}Removed retired policy list ${INSTALL_DIR}/${retired}${NC}"
+	done
 }

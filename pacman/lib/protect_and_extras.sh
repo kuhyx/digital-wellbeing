@@ -6,10 +6,7 @@
 protect_policy_files() {
 	echo -e "${BLUE}Protecting policy files from modification...${NC}"
 	if command -v chattr >/dev/null 2>&1; then
-		chattr +i "$BLOCKED_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make blocked list immutable${NC}"
-		chattr +i "$GREYLIST_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make greylist immutable${NC}"
 		chattr +i "$LOCK_LIB_DEST" 2>/dev/null || echo -e "${YELLOW}Warning: Could not make lock library immutable${NC}"
-		# Note: whitelist is intentionally left modifiable for user convenience
 	else
 		echo -e "${YELLOW}Warning: chattr not available, policy files will not be immutable${NC}"
 	fi

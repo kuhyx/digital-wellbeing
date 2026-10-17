@@ -2,12 +2,12 @@
 
 ## Integrity Verification
 
-On every invocation, the wrapper verifies policy files haven't been tampered with:
+On every invocation, the wrapper verifies its libraries haven't been tampered with:
 
 ```bash
 verify_policy_integrity() {
   # Reads /var/lib/pacman-wrapper/policy.sha256
-  # Compares SHA256 of each policy file
+  # Compares SHA256 of the lock lib and each pw_*.sh library
   # If mismatch: BLOCKS all operations
 }
 ```
@@ -40,46 +40,6 @@ This allows package installations to modify `/etc/hosts` temporarily (e.g., for 
 
 ## Common Tasks
 
-### Adding a Blocked Package
-
-1. Edit `pacman_blocked_keywords.txt`:
-
-```bash
-echo "newkeyword" >> pacman_blocked_keywords.txt
-```
-
-2. Reinstall wrapper to update checksums:
-
-```bash
-sudo ./install_pacman_wrapper.sh
-```
-
-### Whitelisting a Package
-
-If a legitimate package is being blocked (e.g., `python-firefox-sync` blocked by "firefox" keyword):
-
-1. Edit `pacman_whitelist.txt`:
-
-```bash
-echo "python-firefox-sync" >> pacman_whitelist.txt
-```
-
-2. Reinstall wrapper:
-
-```bash
-sudo ./install_pacman_wrapper.sh
-```
-
-### Adding a Challenge Requirement
-
-1. Edit `pacman_greylist.txt`:
-
-```bash
-echo "suspicious-package" >> pacman_greylist.txt
-```
-
-2. Reinstall wrapper.
-
 ### Bypassing the Wrapper (Emergency)
 
 If wrapper is broken and you need real pacman:
@@ -94,21 +54,8 @@ sudo /usr/bin/pacman.orig -S package
 
 After every transaction, the wrapper:
 
-1. Scans installed packages for blocked keywords
-2. Removes any that match (shouldn't happen normally)
-3. Scans for greylisted packages and removes them
-4. Checks if VirtualBox is installed and enforces hosts
-
-```bash
-remove_installed_blocked_packages() {
-  mapfile -t installed_names < <("$PACMAN_BIN" -Qq)
-  for name in "${installed_names[@]}"; do
-    if is_blocked_package_name "$name"; then
-      pacman -Rns --noconfirm "$name"
-    fi
-  done
-}
-```
+1. Auto-installs LeechBlock if a browser was installed
+2. Checks if VirtualBox is installed and removes its VMs
 
 ## Stale Lock Handling
 

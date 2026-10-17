@@ -168,10 +168,3 @@ function prompt_for_steam_challenge() {
 	run_word_challenge "Weekend Steam" 5 160 60 20 0 20
 }
 
-# Function to prompt for solving a word unscrambling challenge (for greylisted packages - always active)
-function prompt_for_greylist_challenge() {
-	echo -e "${YELLOW}WARNING: You are trying to install a greylisted package.${NC}"
-
-	# word_length=6, words_count=120, timeout=90s, initial_delay=30, post_delay=15-35
-	run_word_challenge "Greylist" 6 120 90 30 15 20
-}

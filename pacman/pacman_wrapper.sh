@@ -28,7 +28,7 @@ PACMAN_BIN="/usr/bin/pacman"
 # a missing lib degrades to plain pacman with a warning on stderr, which is
 # the same choice the existing pacman_lock_lib.sh block below already makes.
 #
-# The integrity check that guards the POLICY files still runs below, before
+# The integrity check that guards the wrapper libraries still runs below, before
 # any transaction is allowed through.
 # ---------------------------------------------------------------------------
 _WRAPPER_DIR="$(dirname "$(readlink -f "$0")")"
@@ -51,7 +51,7 @@ HEAVY_JOB_LOCK_LIB="/usr/local/bin/heavy_job_lock.sh"
 # Exported: used only by pw_ui.sh (sourced separately).
 export MAKEPKG_CAPPED_BIN="/usr/local/bin/makepkg_capped"
 
-# The policy lists and the integrity-file paths are declared in pw_policy.sh,
+# The integrity-file paths are declared in pw_policy.sh,
 # the only file that reads or writes them.
 
 # Stale pacman DB-lock detection/handling (get_lock_holders,
@@ -112,31 +112,9 @@ fi
 # Before any pacman action, ensure maintenance services exist
 ensure_periodic_maintenance
 
-# PROACTIVE CLEANUP: Always check and remove blocked packages at startup
-# This catches packages that were installed before the wrapper or via other means
-echo -e "${CYAN}Checking for blocked packages...${NC}" >&2
-remove_installed_blocked_packages "$@"
-remove_installed_greylisted_packages "$@"
-
-# Check for always blocked packages first (highest priority)
-if check_for_always_blocked "$@"; then
-	echo -e "${RED}Installation BLOCKED: This package is permanently restricted and cannot be installed.${NC}"
-	echo -e "${RED}Package installation has been denied by system policy.${NC}"
-	# Regardless of the attempted action, enforce cleanup of any installed blocked packages
-	remove_installed_blocked_packages "$@"
-	exit 1
-fi
-
 # Check for steam (challenge-eligible package)
 if check_for_steam "$@"; then
 	if ! prompt_for_steam_challenge; then
-		exit 1
-	fi
-fi
-
-# Check for greylisted packages (challenge-eligible)
-if check_for_greylisted "$@"; then
-	if ! prompt_for_greylist_challenge; then
 		exit 1
 	fi
 fi
@@ -192,12 +170,6 @@ if [ $exit_code -eq 0 ]; then
 else
 	echo -e "${RED}Command failed with exit code ${exit_code}.${NC}" >&2
 fi
-
-# After any operation, remove installed blocked packages as part of policy enforcement
-remove_installed_blocked_packages "$@"
-
-# Also remove installed greylisted packages
-remove_installed_greylisted_packages "$@"
 
 auto_install_leechblock "$@"
 

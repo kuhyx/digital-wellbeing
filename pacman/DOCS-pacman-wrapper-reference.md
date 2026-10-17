@@ -6,11 +6,14 @@
 
 Intercept all `pacman` commands to:
 
-1. Block installation of restricted packages (browsers, games, etc.)
-2. Require challenges for greylisted packages
-3. Enforce hosts file sharing on VirtualBox VMs
-4. Auto-setup maintenance services if missing
-5. Handle stale database locks gracefully
+1. Require a weekend-only word challenge for Steam
+2. Remove VirtualBox VMs after every transaction (they bypass /etc/hosts)
+3. Auto-setup maintenance services if missing
+4. Handle stale database locks gracefully
+
+There is no package policy list any more: the blocked-keyword, allow and
+challenge lists were retired on 2026-10-17 because hosts/DNS blocking now
+covers what they guarded. Re-running the installer deletes any deployed copies.
 
 ## Architecture Overview
 
@@ -19,18 +22,16 @@ Intercept all `pacman` commands to:
 │                         PACMAN WRAPPER                              │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  User runs: pacman -S firefox                                       │
+│  User runs: pacman -S steam                                         │
 │                    ↓                                                │
 │  /usr/bin/pacman (symlink) → pacman_wrapper.sh                      │
 │                    ↓                                                │
-│  1. Verify policy file integrity (SHA256)                           │
-│  2. Check if package matches blocked keywords                       │
-│  3. Check if package requires challenge (greylist)                  │
-│  4. Run hosts-guard pre-unlock hook                                 │
-│  5. Execute real pacman: /usr/bin/pacman.orig                       │
-│  6. Run hosts-guard post-relock hook                                │
-│  7. Remove any blocked packages that slipped through                │
-│  8. Enforce VirtualBox hosts if vbox detected                       │
+│  1. Verify wrapper library integrity (SHA256)                       │
+│  2. Steam word challenge if requested                               │
+│  3. Run hosts-guard pre-unlock hook                                 │
+│  4. Execute real pacman: /usr/bin/pacman.orig                       │
+│  5. Run hosts-guard post-relock hook                                │
+│  6. Remove VirtualBox VMs if vbox detected                          │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -43,59 +44,12 @@ Intercept all `pacman` commands to:
 | `/usr/bin/pacman.orig`                  | Real pacman binary                 |
 | `pacman_wrapper.sh`                     | Main wrapper script (823 lines)    |
 | `install_pacman_wrapper.sh`             | Installer script                   |
-| `pacman_blocked_keywords.txt`           | Substrings that cause blocking     |
-| `pacman_whitelist.txt`                  | Exact names that bypass blocking   |
-| `pacman_greylist.txt`                   | Packages requiring challenge       |
 | `words.txt`                             | Word scramble challenge dictionary |
 | `/var/lib/pacman-wrapper/policy.sha256` | Integrity checksums                |
 
-## Policy Files Explained
-
-### pacman_blocked_keywords.txt
-
-```
-# Lines starting with # are comments
-# Any package containing these substrings is BLOCKED
-firefox
-brave
-chromium
-youtube
-stremio
-```
-
-If user tries `pacman -S firefox-developer-edition`, it's blocked because it contains "firefox".
-
-### pacman_whitelist.txt
-
-```
-# Exact package names that bypass keyword blocking
-minizip          # Contains nothing bad but might match a pattern
-python-requests  # Safe despite containing blocked substrings
-```
-
-### pacman_greylist.txt
-
-```
-# Packages requiring word scramble challenge
-# Currently empty - add packages here for challenge requirement
-```
-
 ## Hardcoded Security Checks
 
-These checks are in the script itself and **cannot be bypassed by editing policy files**:
-
-### VirtualBox Check
-
-```bash
-function is_virtualbox_package() {
-  local pkg_lower="${1,,}"
-  [[ $pkg_lower == *"virtualbox"* || $pkg_lower == *"vbox"* ]]
-}
-```
-
-- Detects any package with "virtualbox" or "vbox" in name
-- Requires word scramble challenge (7-letter words, 120s timeout)
-- Auto-enforces hosts file sharing on all VMs after install
+These checks are in the script itself:
 
 ### Steam Check
 
@@ -111,7 +65,7 @@ function is_steam_package() {
 
 ## Word Scramble Challenge
 
-Used for Steam, VirtualBox, and greylisted packages:
+Used for Steam:
 
 ```
 Challenge: Words with 5 letters
@@ -127,8 +81,6 @@ Parameters vary by package type:
 | Package Type | Word Length | Words Shown | Timeout | Initial Delay |
 | ------------ | ----------- | ----------- | ------- | ------------- |
 | Steam        | 5           | 160         | 60s     | 0-20s         |
-| VirtualBox   | 7           | 150         | 120s    | 0-45s         |
-| Greylist     | 6           | 120         | 90s     | 0-30s         |
 
 ## More detail
 
