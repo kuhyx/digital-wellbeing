@@ -126,7 +126,7 @@ if [[ $should_shutdown == true ]]; then
     logger -t day-specific-shutdown "Executing scheduled shutdown at $(printf '%(%Y-%m-%d %H:%M:%S)T' -1)"
 
     # Night lockdown instead of power-off. This machine is a 24/7 home server
-    # (Gitea, the Caddy TLS edge, SyncYomi, the personal website, Open WebUI,
+    # (Gitea, the Caddy TLS edge, the personal website, Open WebUI,
     # Joplin, dufs, ollama, dnsmasq, wg-quick@wg0, nftables, sshd). Powering off
     # took every server down with it. The lockdown action tears down the user GUI
     # and masks the TTY login surface so the machine is unusable from the keyboard,

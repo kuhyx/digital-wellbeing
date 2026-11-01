@@ -5,7 +5,7 @@
 #
 # Installs the "night lockdown" action that REPLACES the midnight power-off.
 #
-# This machine is a 24/7 home server (Gitea, the Caddy TLS edge, SyncYomi, the
+# This machine is a 24/7 home server (Gitea, the Caddy TLS edge, the
 # personal website, Open WebUI, Joplin, dufs, ollama, dnsmasq, wg-quick@wg0,
 # nftables, sshd). The old digital-wellbeing curfew powered the PC off at night,
 # which also took every server down. Night lockdown keeps the curfew's lockout
