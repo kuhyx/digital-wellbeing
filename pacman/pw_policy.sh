@@ -73,3 +73,39 @@ function check_for_steam() {
 	check_install_for is_steam_package "$@"
 }
 
+# nmap ships under the nonfree NPSL licence; rustscan replaces it. True for a
+# package name or a package-file path (nmap, extra/nmap, nmap-7.99-1-*.pkg.tar.*)
+# and nothing else: python-nmap, nmapsi4 etc. are other packages.
+is_nmap_package() {
+	local name="${1##*/}"
+	[[ $name == nmap || $name == nmap-[0-9]*.pkg.tar* ]]
+}
+
+# Returns 0 when the arguments describe an install/upgrade transaction (-S/-U,
+# --sync/--upgrade) that names nmap as a target. Removals (-R*), queries (-Q*)
+# and sync lookups (-Ss -Si -Sg -Sl -Sc) never match.
+check_for_nmap() {
+	local install_mode=0 arg
+	local -a targets=()
+	for arg in "$@"; do
+		case "$arg" in
+		--sync | --upgrade) install_mode=1 ;;
+		--search | --info | --groups | --list | --clean) return 1 ;;
+		--*) ;;
+		-*S*)
+			install_mode=1
+			[[ $arg == *[sigcl]* ]] && return 1
+			;;
+		-*U*) install_mode=1 ;;
+		-*) ;;
+		*) targets+=("$arg") ;;
+		esac
+	done
+	((install_mode)) || return 1
+	for arg in "${targets[@]}"; do
+		if is_nmap_package "$arg"; then
+			return 0
+		fi
+	done
+	return 1
+}

@@ -33,6 +33,10 @@ install_managed_files() {
 	# of a repo checkout that may move.
 	copy_managed_file "$HEAVY_LOCK_SOURCE" "$HEAVY_LOCK_DEST" required "heavy-job lock library"
 	chmod 755 "$HEAVY_LOCK_DEST"
+	# nmap is nonfree and blocked by the wrapper; this shim tells callers to use
+	# rustscan. A real nmap in /usr/bin (should one slip in) is shadowed by it.
+	copy_managed_file "$NMAP_SHIM_SOURCE" "$NMAP_SHIM_DEST" required "nmap shim"
+	chmod 755 "$NMAP_SHIM_DEST"
 	chmod 644 "$WORDS_DEST"
 	remove_retired_policy_files
 }

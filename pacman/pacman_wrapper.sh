@@ -94,6 +94,12 @@ if ! verify_policy_integrity; then
 	exit 1
 fi
 
+# nmap is nonfree (NPSL); rustscan replaces it. Refuse before anything runs.
+if check_for_nmap "$@"; then
+	refuse_nmap_install
+	exit 1
+fi
+
 # Load shared stale-lock helpers (get_lock_holders, check_and_handle_db_lock,
 # has_noconfirm_flag, current_epoch), AFTER integrity verification so a tampered
 # lib (listed in the integrity manifest) is caught before it is sourced. Sourced
