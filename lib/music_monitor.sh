@@ -13,7 +13,7 @@ notify_user() {
 
 	# Try to send desktop notification
 	if command -v notify-send &>/dev/null; then
-		notify-send -u normal -t 5000 "🎵 Music Parallelism" "$message" 2>/dev/null || true
+		notify-send -u normal -t 5000 -i audio-headphones "" 2>/dev/null || true
 	fi
 
 	log_message "$message"
