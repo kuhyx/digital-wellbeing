@@ -1,6 +1,7 @@
 ## Commands
 
 - run: n/a: collection of installer and guard scripts, no single entry point
+- deploy: `scripts/deploy.sh`
 - test: `tests/run_all.sh`
 - test-changed: `scripts/test_changed.sh`
 - lint: `git ls-files '*.sh' ':!:vendor/*' | xargs shellcheck`
