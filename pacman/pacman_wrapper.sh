@@ -118,13 +118,6 @@ fi
 # Before any pacman action, ensure maintenance services exist
 ensure_periodic_maintenance
 
-# Check for steam (challenge-eligible package)
-if check_for_steam "$@"; then
-	if ! prompt_for_steam_challenge; then
-		exit 1
-	fi
-fi
-
 # Display operation
 display_operation "$1"
 

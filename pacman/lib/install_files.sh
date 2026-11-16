@@ -22,7 +22,6 @@ install_managed_files() {
 			"${INSTALL_DIR}/${pw_lib}.sh" required "wrapper library ${pw_lib}"
 		chmod 644 "${INSTALL_DIR}/${pw_lib}.sh"
 	done
-	copy_managed_file "$WORDS_SOURCE" "$WORDS_DEST" required "words list"
 	chmod +x "$WRAPPER_DEST"
 	copy_managed_file "$MAKEPKG_CAPPED_SOURCE" "$MAKEPKG_CAPPED_DEST" required "makepkg capped wrapper"
 	chmod +x "$MAKEPKG_CAPPED_DEST"
@@ -37,16 +36,17 @@ install_managed_files() {
 	# rustscan. A real nmap in /usr/bin (should one slip in) is shadowed by it.
 	copy_managed_file "$NMAP_SHIM_SOURCE" "$NMAP_SHIM_DEST" required "nmap shim"
 	chmod 755 "$NMAP_SHIM_DEST"
-	chmod 644 "$WORDS_DEST"
 	remove_retired_policy_files
 }
 
 # The package policy lists (blocked keywords, whitelist, greylist) were retired
 # on 2026-10-17: hosts/DNS blocking now covers what they guarded. Earlier
 # installs left copies here, the greylist chattr +i, so unlock before deleting.
+# words.txt (the Steam word-scramble dictionary) followed on 2026-11-16, when
+# steam-backlog-enforcer became the only Steam gate.
 remove_retired_policy_files() {
 	local retired
-	for retired in pacman_blocked_keywords.txt pacman_whitelist.txt pacman_greylist.txt; do
+	for retired in pacman_blocked_keywords.txt pacman_whitelist.txt pacman_greylist.txt words.txt; do
 		[[ -e "${INSTALL_DIR}/${retired}" ]] || continue
 		unlock_immutable_file_if_needed "${INSTALL_DIR}/${retired}"
 		rm -f "${INSTALL_DIR}/${retired}"

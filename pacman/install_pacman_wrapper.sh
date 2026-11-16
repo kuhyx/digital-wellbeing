@@ -35,7 +35,6 @@ LOCK_LIB_SOURCE="$(dirname "$0")/pacman_lock_lib.sh"
 # pacman_lock_lib.sh). Named explicitly rather than globbed so a stray pw_*.sh
 # in a working tree cannot be deployed by accident.
 PW_LIBS=(pw_policy pw_guard pw_ui pw_challenge pw_cleanup)
-WORDS_SOURCE="$(dirname "$0")/words.txt"
 MAKEPKG_CAPPED_SOURCE="$(dirname "$0")/makepkg_capped.sh"
 MKPKG_SOURCE="$(dirname "$0")/mkpkg.sh"
 HEAVY_LOCK_SOURCE="$(dirname "$0")/../heavy_job_lock.sh"
@@ -43,7 +42,6 @@ NMAP_SHIM_SOURCE="$(dirname "$0")/nmap_shim.sh"
 INSTALL_DIR="/usr/local/bin"
 WRAPPER_DEST="${INSTALL_DIR}/pacman_wrapper"
 LOCK_LIB_DEST="${INSTALL_DIR}/pacman_lock_lib.sh"
-WORDS_DEST="${INSTALL_DIR}/words.txt"
 MAKEPKG_CAPPED_DEST="${INSTALL_DIR}/makepkg_capped"
 MKPKG_DEST="${INSTALL_DIR}/mkpkg"
 HEAVY_LOCK_DEST="${INSTALL_DIR}/heavy_job_lock.sh"

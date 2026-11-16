@@ -43,36 +43,6 @@ verify_policy_integrity() {
 	return 0
 }
 
-# Helper: Check if this is an install command and run a filter on each package name
-# Usage: check_install_for filter_func "$@"
-# Returns 0 if filter_func matches any package
-function check_install_for() {
-	local filter_func="$1"
-	shift
-	# Check if the command is an installation command
-	if [[ ${1:-} == "-S" || ${1:-} == "-Sy" || ${1:-} == "-Syu" || ${1:-} == "-Syyu" || ${1:-} == "-U" ]]; then
-		for arg in "$@"; do
-			# Strip repository prefix if present (like extra/ or community/)
-			local package_name="${arg##*/}"
-			if "$filter_func" "$package_name"; then
-				return 0
-			fi
-		done
-	fi
-	return 1
-}
-
-# Helper to check if a package name is steam
-# shellcheck disable=SC2329 # invoked indirectly by name (check_install_for)
-function is_steam_package() {
-	[[ $1 == "steam" ]]
-}
-
-# Function to check if user is trying to install steam (challenge-eligible package)
-function check_for_steam() {
-	check_install_for is_steam_package "$@"
-}
-
 # nmap ships under the nonfree NPSL licence; rustscan replaces it. True for a
 # package name or a package-file path (nmap, extra/nmap, nmap-7.99-1-*.pkg.tar.*)
 # and nothing else: python-nmap, nmapsi4 etc. are other packages.
