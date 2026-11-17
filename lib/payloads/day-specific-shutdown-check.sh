@@ -6,6 +6,13 @@ CONFIG_FILE="/etc/shutdown-schedule.conf"
 OVERRIDES_FILE="/etc/shutdown-schedule-overrides.conf"
 LOCKDOWN_STATE_FILE="/var/lib/night-lockdown/state"
 UNLOCK_SCRIPT="/usr/local/bin/night-lockdown-unlock.sh"
+# Evening-chain deferral (see evening_chain_defers). The pending CLI needs
+# kuhy's user site (earned_time, gatelock), hence HOME=/home/kuhy at the call.
+CHAIN_STATE_DIR="/var/lib/night-lockdown"
+PENDING_CMD=(/usr/bin/python3 -m gatelock.evening_chain pending)
+PENDING_TIMEOUT=20
+CHAIN_UNIT="evening-gates.service"
+EVENING_HARD_END=1380 # 23:00: the chain never defers lockdown past this
 
 # Lockdown is DERIVED from the same inputs that enter it, in both directions.
 # Whenever this tick lands outside the window (or under an override) while the
@@ -55,6 +62,59 @@ check_active_override() {
         return 0
     fi
     return 1
+}
+
+# Evening chain: before the evening lockdown, kuhy's unpaid gates (book,
+# tutor, leetcode) get to run as the user unit evening-gates.service. Returns 0
+# when this tick must NOT enter lockdown. FAIL CLOSED: every outcome except
+# "CLI says rungs pending AND the unit is running" returns 1 (enter lockdown):
+#   - CLI exit 1 (nothing pending / free day / sick day / >= 23:00)
+#   - CLI exit 2, timeout or any other code (logged as ERROR)
+#   - unit start failure, or unit inactive right after start (ERROR / ended)
+#   - unit started earlier tonight and now inactive: kuhy ended the chain
+# chain_started_<date> / chain_ended_<date> are root stamps so an ended chain
+# is not restarted the same evening; stamps of other days are pruned.
+evening_chain_defers() {
+    local today stamp f out rc rungs
+    printf -v today '%(%Y-%m-%d)T' -1
+    for f in "$CHAIN_STATE_DIR"/chain_*; do
+        [[ -e $f && $f != *"_$today" ]] && rm -f "$f"
+    done
+    [[ -e "$CHAIN_STATE_DIR/chain_ended_$today" ]] && return 1
+    stamp="$CHAIN_STATE_DIR/chain_started_$today"
+
+    out=$(HOME=/home/kuhy timeout "$PENDING_TIMEOUT" "${PENDING_CMD[@]}" 2>&1)
+    rc=$?
+    case $rc in
+    0) ;;
+    1) return 1 ;;
+    *)
+        logger -t day-specific-shutdown "ERROR: evening chain pending check failed (exit $rc): ${out//$'\n'/ } - entering lockdown"
+        return 1
+        ;;
+    esac
+    rungs=${out//$'\n'/ }
+
+    if systemctl --user -M kuhy@ is-active --quiet "$CHAIN_UNIT"; then
+        : >"$stamp"
+    elif [[ -e $stamp ]]; then
+        : >"$CHAIN_STATE_DIR/chain_ended_$today"
+        logger -t day-specific-shutdown "Evening chain ended (unit inactive after it was started) - entering lockdown"
+        return 1
+    else
+        if ! timeout "$PENDING_TIMEOUT" systemctl --user -M kuhy@ start "$CHAIN_UNIT"; then
+            logger -t day-specific-shutdown "ERROR: evening chain unit $CHAIN_UNIT failed to start - entering lockdown"
+            return 1
+        fi
+        : >"$stamp"
+        if ! systemctl --user -M kuhy@ is-active --quiet "$CHAIN_UNIT"; then
+            : >"$CHAIN_STATE_DIR/chain_ended_$today"
+            logger -t day-specific-shutdown "ERROR: evening chain unit $CHAIN_UNIT inactive right after start - entering lockdown"
+            return 1
+        fi
+    fi
+    logger -t day-specific-shutdown "deferred: evening chain pending: $rungs"
+    return 0
 }
 
 if check_active_override; then
@@ -119,6 +179,19 @@ printf -v window_label '%02d:%02d-%02d:%02d' \
 if [[ $current_time_minutes -ge $shutdown_start ]] || [[ $current_time_minutes -lt $morning_end_minutes ]]; then
     should_shutdown=true
     logger -t day-specific-shutdown "$day_name $current_hour:$current_minute is inside the $window_label shutdown window"
+fi
+
+# Evening only (shutdown_start <= now < 23:00), never when already LOCKED, and
+# never on a dry run (it would start a real GUI gate). The python call lives
+# inside this path so every other tick of the day stays cheap.
+if [[ $should_shutdown == true ]] && [[ -z "${DRY_RUN:-}" ]] &&
+    [[ $current_time_minutes -ge $shutdown_start ]] &&
+    [[ $current_time_minutes -lt $EVENING_HARD_END ]]; then
+    lock_state=UNLOCKED
+    [[ -r $LOCKDOWN_STATE_FILE ]] && read -r lock_state <"$LOCKDOWN_STATE_FILE"
+    if [[ $lock_state != LOCKED ]] && evening_chain_defers; then
+        exit 0
+    fi
 fi
 
 if [[ $should_shutdown == true ]]; then
