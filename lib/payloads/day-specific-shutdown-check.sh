@@ -12,6 +12,7 @@ CHAIN_STATE_DIR="/var/lib/night-lockdown"
 PENDING_CMD=(/usr/bin/python3 -m gatelock.evening_chain pending)
 PENDING_TIMEOUT=20
 CHAIN_UNIT="evening-gates.service"
+CHAIN_GRACE=120 # seconds to wait for the late-credit writer after the last rung
 EVENING_HARD_END=1380 # 23:00: the chain never defers lockdown past this
 
 # Lockdown is DERIVED from the same inputs that enter it, in both directions.
@@ -68,12 +69,16 @@ check_active_override() {
 # tutor, leetcode) get to run as the user unit evening-gates.service. Returns 0
 # when this tick must NOT enter lockdown. FAIL CLOSED: every outcome except
 # "CLI says rungs pending AND the unit is running" returns 1 (enter lockdown):
-#   - CLI exit 1 (nothing pending / free day / sick day / >= 23:00)
+#   - CLI exit 1 (nothing pending / free day / sick day / >= 23:00), except for
+#     the CHAIN_GRACE window after a chain that ran tonight (no fail-open risk:
+#     it is bounded, and exit 2 / timeout never get it)
 #   - CLI exit 2, timeout or any other code (logged as ERROR)
 #   - unit start failure, or unit inactive right after start (ERROR / ended)
 #   - unit started earlier tonight and now inactive: kuhy ended the chain
 # chain_started_<date> / chain_ended_<date> are root stamps so an ended chain
-# is not restarted the same evening; stamps of other days are pruned.
+# is not restarted the same evening; chain_done_<date> holds the epoch of the
+# first "nothing pending" sighting after the chain ran (grace, see case 1 below).
+# Stamps of other days are pruned.
 evening_chain_defers() {
     local today stamp f out rc rungs
     printf -v today '%(%Y-%m-%d)T' -1
@@ -87,7 +92,24 @@ evening_chain_defers() {
     rc=$?
     case $rc in
     0) ;;
-    1) return 1 ;;
+    1)
+        # The chain ran tonight and nothing is pending any more: kuhy just paid
+        # the last rung. The late-credit writer may need a tick to move the
+        # shutdown later, so give it CHAIN_GRACE seconds from the first sighting.
+        [[ -e $stamp ]] || return 1
+        local done_stamp="$CHAIN_STATE_DIR/chain_done_$today" first now
+        printf -v now '%(%s)T' -1
+        if [[ -s $done_stamp ]]; then
+            read -r first <"$done_stamp"
+            [[ $first =~ ^[0-9]+$ ]] || first=0 # unreadable stamp: grace is over
+        else
+            first=$now
+            printf '%s\n' "$now" >"$done_stamp"
+        fi
+        ((now - first < CHAIN_GRACE)) || return 1
+        logger -t day-specific-shutdown "deferred: evening chain finished, waiting for the new shutdown time"
+        return 0
+        ;;
     *)
         logger -t day-specific-shutdown "ERROR: evening chain pending check failed (exit $rc): ${out//$'\n'/ } - entering lockdown"
         return 1

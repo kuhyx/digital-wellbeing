@@ -223,13 +223,65 @@ DRY_RUN=1 FAKE_MIN=$EVENING bash "$CHECK" >/dev/null 2>&1
 called ' start ' && fail "DRY_RUN must not start the unit: $(calls)"
 ok "DRY_RUN never starts the unit"
 
+# Last rung just paid: pending says exit 1 at once, but the late-credit writer
+# may lag a tick before the config moves the shutdown later. If the chain ran
+# tonight, hold lockdown for a grace period measured from the first sighting.
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+run_case $EVENING 1
+entered && fail "chain ran + pending exit 1 must defer on the first tick, got: $(calls)"
+logged 'deferred: evening chain finished, waiting for the new shutdown time' || fail "no grace log: $(cat "$LOG")"
+[[ -s "$STAMPS/chain_done_$TODAY" ]] || fail "no chain_done stamp with an epoch"
+ok "chain ran + pending exit 1: first tick deferred, chain_done epoch stamped"
+
+printf -v now '%(%s)T' -1
+printf '%s\n' "$((now - 30))" >"$STAMPS/chain_done_$TODAY"
+run_case $EVENING 1
+entered && fail "grace (30 s old) must still defer"
+ok "grace stamp 30 s old: still deferred"
+
+printf '%s\n' "$((now - 130))" >"$STAMPS/chain_done_$TODAY"
+run_case $EVENING 1
+entered || fail "grace over (130 s old) must enter, got: $(calls)"
+ok "grace stamp 130 s old: lockdown as usual"
+
+reset_case
+run_case $EVENING 1
+entered || fail "no chain_started: no grace, must enter"
+[[ -e "$STAMPS/chain_done_$TODAY" ]] && fail "no chain_done without chain_started"
+ok "chain never ran tonight: no grace, lockdown"
+
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+run_case $EVENING 2
+entered || fail "exit 2 after the chain ran must enter with no grace"
+[[ -e "$STAMPS/chain_done_$TODAY" ]] && fail "exit 2 must not start a grace"
+ok "pending exit 2 after the chain ran: fail closed, no grace"
+
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+: >"$TMP_DIR/pending_sleep"
+run_case $EVENING 0
+entered || fail "timeout after the chain ran must enter with no grace"
+[[ -e "$STAMPS/chain_done_$TODAY" ]] && fail "timeout must not start a grace"
+ok "pending timeout after the chain ran: fail closed, no grace"
+
+# Ended by kuhy (exit 0, unit inactive, started earlier) stays immediate.
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+run_case $EVENING 0
+entered || fail "ended evening must enter immediately"
+[[ -e "$STAMPS/chain_done_$TODAY" ]] && fail "ended evening must not get a grace"
+ok "evening ended by kuhy: immediate lockdown, no grace"
+
 # Old stamps are pruned, today's survive.
 reset_case
 : >"$STAMPS/chain_started_2000-01-01"
 : >"$STAMPS/chain_ended_2000-01-01"
+: >"$STAMPS/chain_done_2000-01-01"
 : >"$STAMPS/unrelated"
 run_case $EVENING 1
-[[ ! -e "$STAMPS/chain_started_2000-01-01" && ! -e "$STAMPS/chain_ended_2000-01-01" ]] || fail "old chain stamps not pruned"
+[[ ! -e "$STAMPS/chain_started_2000-01-01" && ! -e "$STAMPS/chain_ended_2000-01-01" && ! -e "$STAMPS/chain_done_2000-01-01" ]] || fail "old chain stamps not pruned"
 [[ -e "$STAMPS/unrelated" ]] || fail "prune touched a non-chain file"
 ok "chain stamps from other days are pruned"
 
