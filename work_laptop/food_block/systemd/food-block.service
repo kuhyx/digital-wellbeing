@@ -1,0 +1,6 @@
+[Unit]
+Description=Re-apply the food delivery block (hosts + browser policies)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/food-block/apply.sh

@@ -1,0 +1,46 @@
+# Food and quick-grocery delivery sites blocked on the work laptop.
+# One hostname per line; '#' starts a comment.
+#
+# Browser policies block each entry AND all its subdomains. The /etc/hosts
+# layer cannot wildcard, so apply.sh also adds www./m./api. variants and
+# this file lists known API hosts explicitly.
+#
+# Multi-service brands: only the food part is listed. uber.com (rides) and
+# bolt.eu (scooters/rides) stay reachable on purpose.
+# Every entry resolved via 1.1.1.1 on 2026-11-17 (dead ones were dropped).
+
+# Delivery platforms
+ubereats.com
+eats.uber.com
+wolt.com
+wolt.pl
+consumer-api.wolt.com
+restaurant-api.wolt.com
+authentication.wolt.com
+glovoapp.com
+glovo.com
+pyszne.pl
+takeaway.com
+just-eat.com
+food.bolt.eu
+bolt.food
+
+# Quick commerce / grocery delivery
+delio.com.pl
+delio.pl
+jush.pl
+lisek.app
+lisek.pl
+frisco.pl
+barbora.pl
+zakupy.auchan.pl
+sklep.carrefour.pl
+
+# Restaurant chains with their own online ordering
+kfc.pl
+pizzahut.pl
+dominospizza.pl
+telepizza.pl
+burgerking.pl
+dagrasso.pl
+mcdonalds.pl

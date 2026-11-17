@@ -1,0 +1,9 @@
+[Unit]
+Description=Re-apply the food delivery block when /etc/hosts changes
+
+[Path]
+PathChanged=/etc/hosts
+Unit=food-block.service
+
+[Install]
+WantedBy=paths.target
