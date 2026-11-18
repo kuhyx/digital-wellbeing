@@ -116,7 +116,6 @@ run_case() {
 		"source '$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh'; \
      timer_needs_restoration() { return 1; }; \
      restore_timer() { :; }; \
-     monitor_with_dbus() { printf 'dbus'; }; \
      monitor_with_polling() { printf 'polling'; }; \
      start_monitoring")
 
@@ -127,59 +126,14 @@ run_case() {
 	fi
 }
 
-run_dbus_throttle_case() {
-	local ts_sequence="$1"
-	local expected_calls="$2"
-	local check_interval="${3:-30}"
-	local calls
-	local counter_file="$TMP_DIR/timer_checks.log"
+# Poll only since 2026-10-24: a root `busctl monitor | while read` loop filled
+# dbus-broker's shared quota and got PID1 and logind disconnected, which killed
+# the X session. busctl being installed must not bring it back.
+printf 'Checking the monitor polls even when busctl exists...\n'
+run_case polling 1
 
-	: >"$counter_file"
-
-	# The `bash -c` body below is a script for a CHILD shell - $1,
-	# $TEST_CHECK_INTERVAL, $COUNTER_FILE and ${mock_ts[...]} must reach it
-	# UNEXPANDED and be evaluated there. Single quotes are load-bearing.
-	# shellcheck disable=SC2016
-	calls=$(env -i PATH="$BIN_DIR" SHUTDOWN_TIMER_MONITOR_SKIP_MAIN=1 MOCK_BUSCTL_LINES="day-specific-shutdown.timer\nday-specific-shutdown.timer\nday-specific-shutdown.timer" MOCK_TS_SEQUENCE="$ts_sequence" COUNTER_FILE="$counter_file" TEST_CHECK_INTERVAL="$check_interval" /bin/bash -c '
-    source "$1"
-    CHECK_INTERVAL="$TEST_CHECK_INTERVAL"
-    timer_needs_restoration() { printf "x\n" >> "$COUNTER_FILE"; return 1; }
-    restore_timer() { :; }
-    mock_idx=0
-    IFS=" " read -r -a mock_ts <<< "$MOCK_TS_SEQUENCE"
-    current_epoch() {
-      local out_var="${1:-}"
-      local ts_value="${mock_ts[$mock_idx]:-0}"
-      mock_idx=$((mock_idx + 1))
-
-      if [[ -n $out_var ]]; then
-        printf -v "$out_var" '%s' "$ts_value"
-      else
-        printf "%s\n" "$ts_value"
-      fi
-    }
-    monitor_with_dbus >/dev/null 2>&1 || true
-    timer_checks=0
-    while IFS= read -r _; do
-      timer_checks=$((timer_checks + 1))
-    done < "$COUNTER_FILE"
-    printf "%s" "$timer_checks"
-  ' _ "$WORKTREE/system-maintenance/bin/shutdown-timer-monitor.sh")
-
-	assert_equals "$expected_calls" "$calls" 'monitor_with_dbus should throttle repeated relevant events'
-}
-
-printf 'Checking D-Bus path is preferred when busctl exists...\n'
-run_case dbus 1
-
-printf 'Checking polling fallback is used when busctl is absent...\n'
+printf 'Checking the monitor polls when busctl is absent...\n'
 run_case polling 0
-
-printf 'Checking D-Bus monitor throttles repeated events within interval...\n'
-run_dbus_throttle_case '100 105 109' '1'
-
-printf 'Checking D-Bus monitor can process all events when interval is zero...\n'
-run_dbus_throttle_case '100 101 102' '3' '0'
 
 printf 'Checking wait helper enforces delay even with /dev/null stdin...\n'
 wait_elapsed=$(env -i PATH="/usr/bin:/bin" SHUTDOWN_TIMER_MONITOR_SKIP_MAIN=1 /bin/bash -c \
@@ -190,26 +144,15 @@ wait_elapsed=$(env -i PATH="/usr/bin:/bin" SHUTDOWN_TIMER_MONITOR_SKIP_MAIN=1 /b
    printf '%s' \$((end-start))" </dev/null)
 assert_equals '1' "$wait_elapsed" 'wait_seconds should not return immediately on /dev/null stdin'
 
-printf 'Checking installer template stays in sync with the event-driven monitor...\n'
-grep -Fq 'monitor_with_dbus()' "${SETUP_SOURCES[@]}" ||
-	fail 'setup_midnight_shutdown.sh should install the D-Bus monitor helper'
+printf 'Checking installer template stays in sync with the poll-only monitor...\n'
 grep -Fq 'start_monitoring()' "${SETUP_SOURCES[@]}" ||
 	fail 'setup_midnight_shutdown.sh should install the start_monitoring dispatcher'
-grep -Fq 'if command -v busctl &>/dev/null; then' "${SETUP_SOURCES[@]}" ||
-	fail 'setup_midnight_shutdown.sh should prefer busctl when available'
-grep -Fq 'current_epoch now_ts' "${SETUP_SOURCES[@]}" ||
-	fail 'setup_midnight_shutdown.sh should use out-var epoch helper in D-Bus throttling path'
-# Searching for this literal source text; expanding it would run
-# current_epoch and grep for its output instead.
-# shellcheck disable=SC2016
-if grep -Fq 'now_ts=$(current_epoch)' "${SETUP_SOURCES[@]}"; then
-	fail 'setup_midnight_shutdown.sh should avoid subshell epoch capture in D-Bus path'
-fi
-# Literal source text, as above.
-# shellcheck disable=SC2016
-if grep -Fq 'now_ts=$(current_epoch)' "$TARGET_SCRIPT"; then
-	fail 'runtime shutdown monitor should avoid subshell epoch capture in D-Bus path'
-fi
+for src in "${SETUP_SOURCES[@]}" "$TARGET_SCRIPT"; do
+	# Code lines only: both files keep a comment that names the old loop.
+	if grep -Ev '^[[:space:]]*#' "$src" | grep -Eq 'busctl monitor|monitor_with_dbus'; then
+		fail "$src must not run a busctl monitor (dbus-broker quota, 2026-10-24)"
+	fi
+done
 grep -Fq 'OnUnitActiveSec=300' "${SETUP_SOURCES[@]}" ||
 	fail 'setup_midnight_shutdown.sh should run watchdog timer at 300s cadence'
 grep -Fq 'wait_seconds()' "${SETUP_SOURCES[@]}" ||

@@ -42,15 +42,6 @@ wait_seconds() {
 	fi
 }
 
-current_epoch() {
-	local out_var="${1:-}"
-	if [[ -n $out_var ]]; then
-		printf -v "$out_var" '%(%s)T' -1
-	else
-		printf '%(%s)T\n' -1
-	fi
-}
-
 log_message() {
 	local _ts
 	local msg
@@ -102,35 +93,12 @@ restore_timer() {
     fi
 }
 
-monitor_with_dbus() {
-	log_message "Starting shutdown timer monitoring with D-Bus events"
-	local last_check_ts=0
-
-	if command -v busctl &>/dev/null; then
-		busctl monitor --system org.freedesktop.systemd1 2>/dev/null |
-			while read -r line; do
-				if [[ $line == *"$TIMER_NAME"* || $line == *"$SERVICE_NAME"* ]]; then
-					local now_ts
-					current_epoch now_ts
-					if (( now_ts - last_check_ts < CHECK_INTERVAL )); then
-						continue
-					fi
-					last_check_ts=$now_ts
-					# Quiet on the happy path: the timer fires every minute, so
-					# an event here is the normal heartbeat, not a signal.
-					# Logging it wrote 13 MB to the monitor log.
-					if timer_needs_restoration; then
-						log_message "Systemd event detected for shutdown timer"
-						restore_timer
-					fi
-				fi
-			done
-	else
-		log_message "busctl not available, falling back to polling"
-		monitor_with_polling
-	fi
-}
-
+# Poll only. Until 2026-10-24 this preferred a root `busctl monitor --system
+# org.freedesktop.systemd1 | while read` loop. Whenever bash fell behind the
+# firehose (daemon-reloads, the per-minute timer tick), the queued copies
+# filled dbus-broker's 'bytes' quota that every root peer shares, and the
+# broker disconnected PID1 and logind from the bus, which killed the X session.
+# Mirrors system-maintenance's bin/shutdown-timer-monitor.sh (ad0e471).
 monitor_with_polling() {
 	log_message "Starting shutdown timer monitoring with polling (interval: ${CHECK_INTERVAL}s)"
 
@@ -154,12 +122,7 @@ start_monitoring() {
 		log_message "Initial check: Timer is properly configured"
 	fi
 
-	if command -v busctl &>/dev/null; then
-		monitor_with_dbus
-	else
-		log_message "busctl not available, falling back to polling"
-		monitor_with_polling
-	fi
+	monitor_with_polling
 }
 
 start_monitoring
