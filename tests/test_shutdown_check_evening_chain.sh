@@ -75,6 +75,7 @@ cat >"$TMP_DIR/bin/systemctl" <<STUB
 echo "systemctl \$*" >>"$CALLS"
 case "\$*" in
 *is-active*) [[ -f "$TMP_DIR/unit_active" ]] ;;
+*show*) cat "$TMP_DIR/main_status" 2>/dev/null || echo 0 ;;
 *start*)
 	[[ -f "$TMP_DIR/start_fails" ]] && exit 1
 	[[ -f "$TMP_DIR/start_dies" ]] || : >"$TMP_DIR/unit_active"
@@ -99,7 +100,7 @@ run_case() {
 	FAKE_MIN="$1" bash "$CHECK" >/dev/null 2>&1 || fail "check exited non-zero (min=$1 rc=$2)"
 }
 reset_case() {
-	rm -rf "$STAMPS" "$TMP_DIR"/{unit_active,start_fails,start_dies,pending_sleep,pending_out}
+	rm -rf "$STAMPS" "$TMP_DIR"/{unit_active,start_fails,start_dies,pending_sleep,pending_out,main_status}
 	mkdir -p "$STAMPS"
 }
 calls() { tr '\n' '|' <"$CALLS"; }
@@ -125,6 +126,39 @@ run_case $EVENING 0
 entered && fail "active unit must keep deferring"
 called ' start ' && fail "an active unit must not be started again: $(calls)"
 ok "already-active unit keeps deferring without a restart"
+
+# The chain exited 3 (EXIT_NO_X): no X server yet, e.g. booted at 20:04 and
+# the login finished after book-guard's 10 s wait (2026-11-18). No gate was
+# ever shown, so that is NOT kuhy ending the evening: restart it and defer.
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+printf '3\n' >"$TMP_DIR/main_status"
+run_case $EVENING 0
+entered && fail "chain that exited 3 (no X) must defer, got: $(calls)"
+[[ -e "$STAMPS/chain_ended_$TODAY" ]] && fail "no-X exit must not write chain_ended"
+called 'systemctl --user -M kuhy@ start evening-gates.service' || fail "no-X chain not restarted: $(calls)"
+logged 'no X server' || fail "no-X restart not logged: $(cat "$LOG")"
+ok "chain exited 3 (no X): restarted, deferred, no chain_ended"
+
+# Restarted unit dies again at once: still not an ending, defer next minute.
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+printf '3\n' >"$TMP_DIR/main_status"
+: >"$TMP_DIR/start_dies"
+run_case $EVENING 0
+entered && fail "no-X restart that is not up yet must still defer, got: $(calls)"
+[[ -e "$STAMPS/chain_ended_$TODAY" ]] && fail "no-X restart must not write chain_ended"
+ok "no-X restart not active yet: deferred, retried next minute"
+
+# A no-X restart that fails to start at all is still fail closed.
+reset_case
+: >"$STAMPS/chain_started_$TODAY"
+printf '3\n' >"$TMP_DIR/main_status"
+: >"$TMP_DIR/start_fails"
+run_case $EVENING 0
+entered || fail "no-X restart start failure must enter (fail closed)"
+logged 'ERROR: evening chain' || fail "no-X start failure not logged as error"
+ok "no-X restart start failure: lockdown + error log"
 
 # Kuhy ended the chain: unit was started earlier tonight, now inactive.
 reset_case

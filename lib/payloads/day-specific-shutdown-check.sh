@@ -12,6 +12,7 @@ CHAIN_STATE_DIR="/var/lib/night-lockdown"
 PENDING_CMD=(/usr/bin/python3 -m gatelock.evening_chain pending)
 PENDING_TIMEOUT=20
 CHAIN_UNIT="evening-gates.service"
+CHAIN_EXIT_NO_X=3 # gatelock.evening_chain EXIT_NO_X: no X server, no gate shown
 CHAIN_GRACE=120 # seconds to wait for the late-credit writer after the last rung
 EVENING_HARD_END=1380 # 23:00: the chain never defers lockdown past this
 
@@ -119,6 +120,16 @@ evening_chain_defers() {
 
     if systemctl --user -M kuhy@ is-active --quiet "$CHAIN_UNIT"; then
         : >"$stamp"
+    elif [[ -e $stamp ]] && [[ "$(systemctl --user -M kuhy@ show -p ExecMainStatus --value "$CHAIN_UNIT" 2>/dev/null)" == "$CHAIN_EXIT_NO_X" ]]; then
+        # The chain never showed a gate: no X server answered (a boot whose
+        # login finished after book-guard's wait, 2026-11-18). That is not kuhy
+        # ending the evening, so retry each tick; the pending CLI stops
+        # answering 0 at 23:00, which bounds the retries.
+        if ! timeout "$PENDING_TIMEOUT" systemctl --user -M kuhy@ start "$CHAIN_UNIT"; then
+            logger -t day-specific-shutdown "ERROR: evening chain unit $CHAIN_UNIT failed to restart after no X server - entering lockdown"
+            return 1
+        fi
+        logger -t day-specific-shutdown "Evening chain found no X server - restarted it, lockdown deferred"
     elif [[ -e $stamp ]]; then
         : >"$CHAIN_STATE_DIR/chain_ended_$today"
         logger -t day-specific-shutdown "Evening chain ended (unit inactive after it was started) - entering lockdown"
