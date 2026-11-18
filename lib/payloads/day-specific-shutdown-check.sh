@@ -13,7 +13,7 @@ PENDING_CMD=(/usr/bin/python3 -m gatelock.evening_chain pending)
 PENDING_TIMEOUT=20
 CHAIN_UNIT="evening-gates.service"
 CHAIN_EXIT_NO_X=3 # gatelock.evening_chain EXIT_NO_X: no X server, no gate shown
-CHAIN_GRACE=120 # seconds to wait for the late-credit writer after the last rung
+CHAIN_GRACE=120 # seconds to wait for the credit writer after the last rung
 EVENING_HARD_END=1380 # 23:00: the chain never defers lockdown past this
 
 # Lockdown is DERIVED from the same inputs that enter it, in both directions.
@@ -95,7 +95,7 @@ evening_chain_defers() {
     0) ;;
     1)
         # The chain ran tonight and nothing is pending any more: kuhy just paid
-        # the last rung. The late-credit writer may need a tick to move the
+        # the last rung. The credit writer may need a tick to move the
         # shutdown later, so give it CHAIN_GRACE seconds from the first sighting.
         [[ -e $stamp ]] || return 1
         local done_stamp="$CHAIN_STATE_DIR/chain_done_$today" first now
