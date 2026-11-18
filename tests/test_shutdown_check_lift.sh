@@ -32,10 +32,14 @@ trap cleanup EXIT
 # path redirected into the sandbox, so it runs as a non-root user against
 # stub enter/unlock scripts that only record that they were called.
 CHECK="$TMP_DIR/check.sh"
+# The evening chain is stubbed as "nothing pending" (PENDING_CMD=false): the
+# real CLI reads live ledgers and could start the real gate unit.
 sed -e "s#^CONFIG_FILE=.*#CONFIG_FILE=\"$TMP_DIR/schedule.conf\"#" \
 	-e "s#^OVERRIDES_FILE=.*#OVERRIDES_FILE=\"$TMP_DIR/overrides.conf\"#" \
 	-e "s#^LOCKDOWN_STATE_FILE=.*#LOCKDOWN_STATE_FILE=\"$TMP_DIR/state\"#" \
 	-e "s#^UNLOCK_SCRIPT=.*#UNLOCK_SCRIPT=\"$TMP_DIR/unlock.sh\"#" \
+	-e "s#^CHAIN_STATE_DIR=.*#CHAIN_STATE_DIR=\"$TMP_DIR\"#" \
+	-e "s#^PENDING_CMD=.*#PENDING_CMD=(false)#" \
 	-e "s#/usr/local/bin/night-lockdown-enter.sh#$TMP_DIR/enter.sh#g" \
 	"$CHECK_SRC" >"$CHECK"
 chmod +x "$CHECK"
