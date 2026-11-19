@@ -19,6 +19,8 @@ fail() {
 	failed=1
 }
 
+# Colour vars are read by the sourced pacman wrapper helpers, not here.
+# shellcheck disable=SC2034
 RED='' YELLOW='' GREEN='' BLUE='' CYAN='' NC=''
 # shellcheck source=../pacman/pw_policy.sh
 source "$WRAPPER_DIR/pw_policy.sh"
