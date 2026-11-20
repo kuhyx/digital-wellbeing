@@ -199,13 +199,13 @@ unlocked_mean="$(python3 "$SCRIPT_DIR/lib/png_brightness.py" "$TMP_DIR/unlocked.
 ok "desktop is back (mean brightness $unlocked_mean)"
 
 printf '\n== recover: UNLOCKED but lightdm dead, the next morning trigger restarts it\n'
-# 2026-11-20: Xorg died on a driver mismatch right after the unlock, lightdm hit
-# start-limit-hit, and every later trigger logged "already UNLOCKED". Break
-# lightdm the same way (a drop-in that fails each start), then heal the cause
-# and fire the installed morning trigger: lightdm must be active again.
-guest "sudo mkdir -p /run/systemd/system/lightdm.service.d && printf '[Service]\nExecStartPre=/bin/false\n' | sudo tee /run/systemd/system/lightdm.service.d/broken.conf && sudo systemctl daemon-reload && sudo systemctl restart lightdm.service; sleep 15" >/dev/null || true
-[[ "$(probe 'systemctl is-active lightdm.service')" != active ]] || fail "could not break lightdm in the guest"
-guest "sudo rm -rf /run/systemd/system/lightdm.service.d && sudo systemctl daemon-reload" >/dev/null
+# 2026-11-20: Xorg died on a driver mismatch right after the unlock and every
+# later trigger logged "already UNLOCKED". Kill lightdm under UNLOCKED, fire
+# the installed morning trigger: lightdm must be active again. (Reset-failed,
+# the NVIDIA reload and the reboot branch are covered by
+# test_night_lockdown_gui_recover.sh; the guest has no NVIDIA stack.)
+guest "sudo systemctl stop lightdm.service" >/dev/null
+[[ "$(probe 'systemctl is-active lightdm.service')" != active ]] || fail "could not stop lightdm in the guest"
 guest "sudo systemctl start night-lockdown-unlock.service" >/dev/null || fail "the morning trigger unit failed"
 [[ "$(probe 'systemctl is-active lightdm.service')" == active ]] ||
 	fail "the morning trigger left lightdm down while state was UNLOCKED"
