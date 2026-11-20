@@ -16,4 +16,5 @@ install_unlock_script() {
 	# (<<'UNLOCK_EOF'), so the body was already literal — copying it verbatim is
 	# exactly equivalent. Verified by hashing the emitted result.
 	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-unlock.sh" "$UNLOCK_SCRIPT"
+	install -m 0755 "$_NL_PAYLOAD_DIR/night-lockdown-gui-recover.sh" "$GUI_RECOVER_SCRIPT"
 }

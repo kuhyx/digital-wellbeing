@@ -37,7 +37,9 @@ VM="${VMBOX_NL_NAME:-nl}"
 # Sunday 20:57 -> the default 21:00 Thu-Sun window opens three minutes in.
 # The pin is re-applied on every launch (vm lightdm reboots once), so the
 # installers below run in that headroom and the first tick lands after them.
-RTC="${VMBOX_NL_RTC:-2026-09-13T20:57:00}"
+# A fixed date rots: once mirror certificates are newer than the pinned clock,
+# pacman in the guest fails TLS and `vm lightdm` aborts (red on 2026-11-20).
+RTC="${VMBOX_NL_RTC:-$(date -d 'last sunday' +%F)T20:57:00}"
 
 passed=0
 fail() {
@@ -195,5 +197,18 @@ unlocked_mean="$(python3 "$SCRIPT_DIR/lib/png_brightness.py" "$TMP_DIR/unlocked.
 (( unlocked_mean > locked_mean )) ||
 	fail "screen still black after unlock (mean brightness $unlocked_mean)"
 ok "desktop is back (mean brightness $unlocked_mean)"
+
+printf '\n== recover: UNLOCKED but lightdm dead, the next morning trigger restarts it\n'
+# 2026-11-20: Xorg died on a driver mismatch right after the unlock, lightdm hit
+# start-limit-hit, and every later trigger logged "already UNLOCKED". Break
+# lightdm the same way (a drop-in that fails each start), then heal the cause
+# and fire the installed morning trigger: lightdm must be active again.
+guest "sudo mkdir -p /run/systemd/system/lightdm.service.d && printf '[Service]\nExecStartPre=/bin/false\n' | sudo tee /run/systemd/system/lightdm.service.d/broken.conf && sudo systemctl daemon-reload && sudo systemctl restart lightdm.service; sleep 15" >/dev/null || true
+[[ "$(probe 'systemctl is-active lightdm.service')" != active ]] || fail "could not break lightdm in the guest"
+guest "sudo rm -rf /run/systemd/system/lightdm.service.d && sudo systemctl daemon-reload" >/dev/null
+guest "sudo systemctl start night-lockdown-unlock.service" >/dev/null || fail "the morning trigger unit failed"
+[[ "$(probe 'systemctl is-active lightdm.service')" == active ]] ||
+	fail "the morning trigger left lightdm down while state was UNLOCKED"
+ok "a dead lightdm under UNLOCKED is restarted by the next trigger"
 
 printf '\nvmbox_night_lockdown: %d passed, 0 failed\n' "$passed"

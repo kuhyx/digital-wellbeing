@@ -9,6 +9,7 @@ set -euo pipefail
 readonly CONF_FILE="/etc/night-lockdown.conf"
 readonly STATE_DIR="/var/lib/night-lockdown"
 readonly STATE_FILE="$STATE_DIR/state"
+readonly GUI_RECOVER_SCRIPT="/usr/local/bin/night-lockdown-gui-recover.sh"
 
 # shellcheck source=/dev/null
 [[ -r "$CONF_FILE" ]] && source "$CONF_FILE"
@@ -64,9 +65,23 @@ run() {
 
 mkdir -p "$STATE_DIR"
 
-# Idempotency — lifting when already unlocked is a safe no-op.
+# start_gui fails only when the recover script says a reboot must load the GPU driver.
+gui_up() { systemctl is-active --quiet "$DISPLAY_MANAGER_UNIT"; }
+start_gui() {
+	[[ -x "$GUI_RECOVER_SCRIPT" ]] || { run systemctl start "$DISPLAY_MANAGER_UNIT"; return 0; }
+	"$GUI_RECOVER_SCRIPT" || [[ $? -ne 75 ]]
+}
+
+# Idempotency — a safe no-op unless the GUI never came back (2026-11-20: Xorg
+# died on a driver mismatch and every later trigger skipped here).
 if [[ "$(cat "$STATE_FILE" 2>/dev/null || echo UNLOCKED)" == "UNLOCKED" ]]; then
-	logg "already UNLOCKED — nothing else to do"
+	if gui_up; then
+		logg "already UNLOCKED — nothing else to do"
+		exit 0
+	fi
+	logg "already UNLOCKED but $DISPLAY_MANAGER_UNIT is down — starting the GUI again"
+	run systemctl unmask "$DISPLAY_MANAGER_UNIT"
+	start_gui || run systemctl reboot
 	exit 0
 fi
 
@@ -139,8 +154,10 @@ if [[ "$GPU_UNBIND_ENABLE" == "1" ]]; then
 	fi
 fi
 
-# 2. Start the GUI — lightdm autologins back into i3/dwm.
-run systemctl start "$DISPLAY_MANAGER_UNIT"
+# 2. Start the GUI — lightdm autologins back into i3/dwm. The reboot it may
+#    ask for happens at the very end, after the state is recorded.
+need_reboot=0
+start_gui || need_reboot=1
 
 # 2a. Reconnect/reconfigure displays. A DisplayPort link does not always
 #     re-enumerate cleanly on its own after the console teardown, leaving a
@@ -227,3 +244,7 @@ if [[ "$RGB_ENABLE" == "1" ]] && command -v openrgb >/dev/null 2>&1; then
 fi
 
 logg "night lockdown lifted — GUI restored, login surface unmasked"
+if [[ $need_reboot -eq 1 ]]; then
+	logg "rebooting so the new kernel and GPU driver load"
+	run systemctl reboot
+fi

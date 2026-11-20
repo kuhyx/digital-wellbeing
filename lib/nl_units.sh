@@ -78,7 +78,7 @@ verify_install() {
 	log_info "Verifying installation"
 	local ok=true
 	local path
-	for path in "$ENTER_SCRIPT" "$COSMETICS_SCRIPT" "$UNLOCK_SCRIPT" "$CONF_FILE" \
+	for path in "$ENTER_SCRIPT" "$COSMETICS_SCRIPT" "$UNLOCK_SCRIPT" "$GUI_RECOVER_SCRIPT" "$CONF_FILE" \
 		"$UNLOCK_SERVICE" "$UNLOCK_TIMER" "$RGB_OFF_SERVICE" "$I2C_MODULES_FILE"; do
 		if [[ -e "$path" ]]; then
 			log_ok "present: $path"
