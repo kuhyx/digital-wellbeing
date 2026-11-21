@@ -50,6 +50,12 @@ WORKTREE_LIB="$WORKTREE/vendor/common.sh"
 mkdir -p "$(dirname "$WORKTREE_SCRIPT")" "$(dirname "$WORKTREE_LIB")" "$BIN_DIR"
 cp "$TARGET_SCRIPT" "$WORKTREE_SCRIPT"
 
+# The conflict path calls notify-send. Unstubbed, it reached kuhy's live
+# notification daemon: a toast on his display per run, and a D-Bus hang of
+# ~50 s that pushed the suite past the 60 s cap.
+printf '#!/bin/sh\nexit 0\n' >"$BIN_DIR/notify-send"
+chmod +x "$BIN_DIR/notify-send"
+
 # The script sources its own libs from $SCRIPT_DIR/lib/. They must travel into
 # the worktree beside it, or every source line fails and the script exits before
 # any behaviour under test runs.
