@@ -29,7 +29,7 @@ printf 'detect_browsers: the tables survive as globals\n'
 # level. If the -g were ever dropped these counts would be 0 and every browser
 # would silently go unwired, so assert the count rather than just a lookup.
 detect_browsers
-_t_eq "8" "${#BROWSERS[@]}" "all eight Chromium-family browsers are present"
+_t_eq "9" "${#BROWSERS[@]}" "all nine Chromium-family browsers are present"
 _t_eq "3" "${#FIREFOXES[@]}" "all three Firefox-family browsers are present"
 
 printf '\ndetect_browsers: hyphenated keys resolve\n'
