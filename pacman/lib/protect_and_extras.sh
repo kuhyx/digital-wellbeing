@@ -26,10 +26,12 @@ install_leechblock_payload() {
 		if [ -d "$LEECHBLOCK_LIB_SOURCE" ]; then
 			rm -rf "$LEECHBLOCK_LIB_DEST"
 			mkdir -p "$LEECHBLOCK_LIB_DEST"
-			# Only the leechblock_* libs: lib/ is shared with unrelated scripts
-			# (the music_* helpers) that this payload has no business shipping.
-			cp "$LEECHBLOCK_LIB_SOURCE"/leechblock_*.sh "$LEECHBLOCK_LIB_DEST"/
-			chmod +x "$LEECHBLOCK_LIB_DEST"/leechblock_*.sh
+			# Only the leechblock_* libs plus the browser wiring they source:
+			# lib/ is shared with unrelated scripts (the music_* helpers) that
+			# this payload has no business shipping.
+			cp "$LEECHBLOCK_LIB_SOURCE"/leechblock_*.sh \
+				"$LEECHBLOCK_LIB_SOURCE"/browser_extension_wiring.sh "$LEECHBLOCK_LIB_DEST"/
+			chmod +x "$LEECHBLOCK_LIB_DEST"/*.sh
 			echo -e "${GREEN}LeechBlock libs deployed to ${LEECHBLOCK_LIB_DEST}${NC}"
 		else
 			echo -e "${YELLOW}LeechBlock lib/ not found at ${LEECHBLOCK_LIB_SOURCE}; the deployed installer will not run${NC}"
