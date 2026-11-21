@@ -34,6 +34,8 @@ set -euo pipefail
 
 # shellcheck source=lib/nl_commands.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/nl_commands.sh"
+# shellcheck source=lib/kuhy_credit.sh
+[[ -r "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/kuhy_credit.sh" ]] && . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/kuhy_credit.sh"
 
 # shellcheck source=lib/nl_config.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/nl_config.sh"

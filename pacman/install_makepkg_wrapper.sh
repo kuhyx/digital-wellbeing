@@ -107,3 +107,8 @@ chmod 644 "$SOURCE_MANIFEST"
 
 echo -e "${GREEN}makepkg wrapper installed.${NC} Original preserved at ${CYAN}/usr/bin/makepkg.orig${NC}"
 echo -e "Upgrade-survival hook installed at ${CYAN}${HOOK_DEST}${NC}"
+
+# Credit line last; a no-op when this installer runs outside the repo.
+# shellcheck source=../lib/kuhy_credit.sh
+. "$SRC_DIR/../lib/kuhy_credit.sh" 2>/dev/null || kuhy_credit() { :; }
+kuhy_credit

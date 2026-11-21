@@ -79,4 +79,6 @@ Usage:
 After 'setup', re-run setup_midnight_shutdown.sh so the scheduled check calls
 $ENTER_SCRIPT instead of powering off.
 EOF
+	# Credit line; absent when the libs run from a flat deployed copy.
+	if declare -F kuhy_credit >/dev/null; then kuhy_credit; fi
 }

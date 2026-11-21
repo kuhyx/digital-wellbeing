@@ -21,6 +21,8 @@ show_usage() {
 	echo "NOTE: There is no 'disable' option. This is intentional."
 	echo "      The shutdown timer is protected by a monitor service."
 	echo ""
+	# Credit line; absent when the libs run from a flat deployed copy.
+	if declare -F kuhy_credit >/dev/null; then kuhy_credit; fi
 }
 
 # Function to check and request sudo privileges

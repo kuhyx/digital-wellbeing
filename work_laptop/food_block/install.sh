@@ -84,3 +84,8 @@ copy_files
 "$DEST/apply.sh"
 enable_units
 verify
+
+# Credit line last; a no-op when this installer runs outside the repo.
+# shellcheck source=../../lib/kuhy_credit.sh
+. "$SRC/../../lib/kuhy_credit.sh" 2>/dev/null || kuhy_credit() { :; }
+kuhy_credit

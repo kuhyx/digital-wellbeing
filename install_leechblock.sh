@@ -117,3 +117,8 @@ inject_default_config
 detect_browsers
 wire_up_browsers
 install_firefox_policy "$ff_found"
+
+# Credit line last; a no-op when this installer runs outside the repo.
+# shellcheck source=lib/kuhy_credit.sh
+. "$SCRIPT_DIR/lib/kuhy_credit.sh" 2>/dev/null || kuhy_credit() { :; }
+kuhy_credit

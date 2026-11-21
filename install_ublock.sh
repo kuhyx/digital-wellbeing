@@ -223,3 +223,8 @@ fi
 
 echo
 info "Done."
+
+# Credit line last; a no-op when this installer runs outside the repo.
+# shellcheck source=lib/kuhy_credit.sh
+. "$SCRIPT_DIR/lib/kuhy_credit.sh" 2>/dev/null || kuhy_credit() { :; }
+kuhy_credit

@@ -50,6 +50,8 @@ unset _cco_lib
 . "$_CCO_LIB_DIR/cco_install.sh"
 # shellcheck source=lib/cco_report.sh
 . "$_CCO_LIB_DIR/cco_report.sh"
+# shellcheck source=lib/kuhy_credit.sh
+[[ -r "$_CCO_LIB_DIR/kuhy_credit.sh" ]] && . "$_CCO_LIB_DIR/kuhy_credit.sh"
 
 # Send desktop notification (inlined from common.sh to avoid dependency issues
 # when script is installed to /usr/local/bin)

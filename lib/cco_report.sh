@@ -99,4 +99,6 @@ Examples:
   $0 reset discord    # Allow Discord to be opened again
 
 EOF
+	# Credit line; absent when the libs run from a flat deployed copy.
+	if declare -F kuhy_credit >/dev/null; then kuhy_credit; fi
 }

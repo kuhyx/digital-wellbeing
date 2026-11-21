@@ -29,6 +29,8 @@ source "$SCRIPT_DIR/lib/ms_manager.sh"
 source "$SCRIPT_DIR/lib/ms_units.sh"
 # shellcheck source=lib/ms_report.sh
 source "$SCRIPT_DIR/lib/ms_report.sh"
+# shellcheck source=lib/kuhy_credit.sh
+[[ -r "$SCRIPT_DIR/lib/kuhy_credit.sh" ]] && . "$SCRIPT_DIR/lib/kuhy_credit.sh"
 # shellcheck source=lib/ms_setup_flow.sh
 source "$SCRIPT_DIR/lib/ms_setup_flow.sh"
 

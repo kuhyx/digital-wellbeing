@@ -1,5 +1,7 @@
 # digital-wellbeing
 
+<a href="https://kuhy.duckdns.org"><img src="vendor/kuhy-credit.svg" width="48" alt="Created by kuhy"></a>
+
 Self-commitment tooling: a pacman/makepkg wrapper that refuses blocked
 packages, a midnight shutdown timer, browser extension seeding (LeechBlock,
 uBlock), music-parallelism limits, and a night lockdown.
@@ -66,3 +68,13 @@ Moving this code invalidates that manifest, and `check_and_enable_services.sh`
 in the monorepo then reports a permanent "stale or tampered" error even when
 the deployed wrapper is byte-correct. Re-run the installer once after cloning
 to regenerate it.
+
+## Credit
+
+The CLIs' `help` output and the installers' success output end with the
+"Created by kuhy" line from the kuhy_credit terminal stack, vendored from
+`kuhyx/utils` at a pinned tag (`vendor/kuhy-credit.sh`, `vendor/kuhy-credit.svg`).
+The enforcement path (pacman refusals, shutdown and lockdown runtime) prints no
+credit, matching kuhy_credit's "lockers get no credit" rule. To bump: edit
+`KUHY_CREDIT_TAG` in `scripts/vendor_kuhy_credit.sh` and run it;
+`scripts/vendor_kuhy_credit.sh --check` fails when `vendor/` has drifted.

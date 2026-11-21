@@ -126,3 +126,8 @@ echo -e "${CYAN}Policy files are now protected with immutable attributes.${NC}"
 if [ -f "$VBOX_ENFORCE_DEST" ]; then
 	echo -e "${CYAN}VirtualBox VMs will automatically be configured to use host's /etc/hosts.${NC}"
 fi
+
+# Credit line last; a no-op when this installer runs outside the repo.
+# shellcheck source=../lib/kuhy_credit.sh
+. "$SCRIPT_DIR/../lib/kuhy_credit.sh" 2>/dev/null || kuhy_credit() { :; }
+kuhy_credit
